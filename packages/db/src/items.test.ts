@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { ConflictError, InvalidOperationError, NotFoundError } from './errors.ts';
+import {
+	AttributeValidationError,
+	ConflictError,
+	InvalidOperationError,
+	NotFoundError,
+	VersionConflictError
+} from './errors.ts';
 import type { Repositories } from './repositories/index.ts';
 import { createCountCategory, useTestDatabase } from './test-helpers.ts';
 
@@ -96,9 +102,12 @@ describe('ItemRepository', () => {
 			await expect(
 				repos.items.create({ categoryId: cat.id, name: 'x', qtyOnHand: 1.5 })
 			).rejects.toBeInstanceOf(InvalidOperationError);
+			await expect(repos.items.create({ sku: 'X-1', categoryId: 999, name: 'x' })).rejects.toThrow(
+				/Category 999 does not exist/
+			);
 			await expect(
-				repos.items.create({ sku: 'X-1', categoryId: 999, name: 'x' })
-			).rejects.toBeInstanceOf(ConflictError);
+				repos.items.create({ sku: 'X-1', categoryId: cat.id, name: 'x', locationId: 999 })
+			).rejects.toThrow(/Location 999 does not exist/);
 		});
 
 		it('rolls back the item if the initial stock fails', async () => {
@@ -212,7 +221,7 @@ describe('ItemRepository', () => {
 			const { repos } = fx();
 			const { wire, bin, r10k } = await seedItems(repos);
 			expect((await repos.items.list({ categoryIds: [wire.id] })).total).toBe(2);
-			expect((await repos.items.list({ locationId: bin.id })).items.map((i) => i.sku)).toEqual([
+			expect((await repos.items.list({ locationIds: [bin.id] })).items.map((i) => i.sku)).toEqual([
 				r10k.sku
 			]);
 		});
@@ -313,6 +322,144 @@ describe('ItemRepository', () => {
 			expect(
 				(await repos.items.list({ attributes: [{ key: 'gauge_awg', op: 'gte', value: 20 }] })).total
 			).toBe(1);
+		});
+	});
+
+	describe('attribute validation', () => {
+		it('validates attributes against inherited and own fields on create', async () => {
+			const { repos } = fx();
+			const parent = await repos.categories.create({
+				name: 'Electronics',
+				unitKind: 'count',
+				displayUnit: 'pcs',
+				fieldDefs: [{ key: 'manufacturer', label: 'Mfr', type: 'text' }]
+			});
+			const cat = await repos.categories.create({
+				name: 'Resistors',
+				parentId: parent.id,
+				skuPrefix: 'RES-',
+				unitKind: 'count',
+				displayUnit: 'pcs',
+				fieldDefs: [{ key: 'resistance', label: 'R', type: 'quantity', unit: 'Ω', required: true }]
+			});
+			const ok = await repos.items.create({
+				categoryId: cat.id,
+				name: 'x',
+				attributes: { manufacturer: 'Yageo', resistance: 100 }
+			});
+			expect(ok.attributes).toEqual({ manufacturer: 'Yageo', resistance: 100 });
+
+			const err = await repos.items
+				.create({ categoryId: cat.id, name: 'y', attributes: { resistance: '1k', colour: 'red' } })
+				.catch((e: unknown) => e);
+			expect(err).toBeInstanceOf(AttributeValidationError);
+			expect((err as AttributeValidationError).issues.map((i) => i.key).sort()).toEqual([
+				'colour',
+				'resistance'
+			]);
+			await expect(repos.items.create({ categoryId: cat.id, name: 'z' })).rejects.toBeInstanceOf(
+				AttributeValidationError
+			);
+		});
+
+		it('keeps values of removed fields on later edits but rejects new unknown keys', async () => {
+			const { repos } = fx();
+			const cat = await createCountCategory(repos);
+			const item = await repos.items.create({
+				categoryId: cat.id,
+				name: 'x',
+				attributes: { resistance: 1, package: '0603' }
+			});
+			const fields = (await repos.categories.get(cat.id)).fieldDefs.filter(
+				(d) => d.key !== 'package'
+			);
+			await repos.categories.update(cat.id, { fieldDefs: fields });
+
+			const edited = await repos.items.update(item.sku, {
+				attributes: { resistance: 2, package: '0603' }
+			});
+			expect(edited.attributes).toEqual({ resistance: 2, package: '0603' });
+			await expect(
+				repos.items.update(item.sku, { attributes: { resistance: 2, other: 'x' } })
+			).rejects.toBeInstanceOf(AttributeValidationError);
+		});
+
+		it('revalidates attributes when an item moves to another category', async () => {
+			const { repos } = fx();
+			const res = await createCountCategory(repos);
+			const ics = await repos.categories.create({
+				name: 'ICs',
+				unitKind: 'count',
+				displayUnit: 'pcs',
+				fieldDefs: [{ key: 'pins', label: 'Pins', type: 'number', required: true }]
+			});
+			const item = await repos.items.create({
+				categoryId: res.id,
+				name: 'x',
+				attributes: { resistance: 1 }
+			});
+			await expect(repos.items.update(item.sku, { categoryId: ics.id })).rejects.toBeInstanceOf(
+				AttributeValidationError
+			);
+			const moved = await repos.items.update(item.sku, {
+				categoryId: ics.id,
+				attributes: { resistance: 1, pins: 8 }
+			});
+			expect(moved).toMatchObject({ categoryId: ics.id, attributes: { resistance: 1, pins: 8 } });
+		});
+
+		it('raises VersionConflictError for stale versions', async () => {
+			const { repos } = fx();
+			const cat = await createCountCategory(repos);
+			const item = await repos.items.create({ categoryId: cat.id, name: 'x' });
+			await repos.items.update(item.sku, { name: 'y' }, 1);
+			const err = await repos.items.update(item.sku, { name: 'z' }, 1).catch((e: unknown) => e);
+			expect(err).toBeInstanceOf(VersionConflictError);
+			expect(err).toMatchObject({ expectedVersion: 1, currentVersion: 2 });
+		});
+	});
+
+	describe('searchable fields', () => {
+		it('indexes only searchable fields and re-indexes when the flag changes', async () => {
+			const { repos } = fx();
+			const tools = await repos.categories.create({
+				name: 'Tools',
+				skuPrefix: 'TOL-',
+				unitKind: 'count',
+				displayUnit: 'pcs',
+				fieldDefs: [
+					{ key: 'brand', label: 'Brand', type: 'text' },
+					{ key: 'serial', label: 'Serial', type: 'text', searchable: false }
+				]
+			});
+			await repos.items.create({
+				categoryId: tools.id,
+				name: 'Stripper',
+				attributes: { brand: 'Knipex', serial: 'SN998877' }
+			});
+			expect((await repos.items.list({ q: 'knipex' })).total).toBe(1);
+			expect((await repos.items.list({ q: 'SN998877' })).total).toBe(0);
+
+			await repos.categories.update(tools.id, {
+				fieldDefs: [
+					{ key: 'brand', label: 'Brand', type: 'text', searchable: false },
+					{ key: 'serial', label: 'Serial', type: 'text' }
+				]
+			});
+			expect((await repos.items.list({ q: 'knipex' })).total).toBe(0);
+			expect((await repos.items.list({ q: 'SN998877' })).total).toBe(1);
+		});
+
+		it('drops values of removed fields from the search index', async () => {
+			const { repos } = fx();
+			const cat = await createCountCategory(repos);
+			await repos.items.create({ categoryId: cat.id, name: 'x', attributes: { package: 'THT' } });
+			expect((await repos.items.list({ q: 'tht' })).total).toBe(1);
+			const fields = (await repos.categories.get(cat.id)).fieldDefs.filter(
+				(d) => d.key !== 'package'
+			);
+			await repos.categories.update(cat.id, { fieldDefs: fields });
+			expect((await repos.items.list({ q: 'tht' })).total).toBe(0);
 		});
 	});
 });

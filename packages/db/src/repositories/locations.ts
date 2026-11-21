@@ -1,4 +1,4 @@
-import type { Location } from '@inventory/shared';
+import { locationCodeSchema, type Location } from '@inventory/shared';
 import type { Selectable } from 'kysely';
 import { NotFoundError } from '../errors.ts';
 import type { LocationsTable } from '../schema.ts';
@@ -66,7 +66,7 @@ export class LocationRepository {
 
 	async create(input: CreateLocationInput): Promise<Location> {
 		const now = this.ctx.now();
-		const code = input.code.trim();
+		const code = locationCodeSchema.parse(input.code);
 		const row = await withConstraintErrors(this.ctx, this.messages(code), () =>
 			this.ctx.db
 				.insertInto('locations')
@@ -91,7 +91,7 @@ export class LocationRepository {
 
 			const values: Record<string, unknown> = { updated_at: tx.now() };
 			if (patch.name !== undefined) values.name = patch.name.trim();
-			if (patch.code !== undefined) values.code = patch.code.trim();
+			if (patch.code !== undefined) values.code = locationCodeSchema.parse(patch.code);
 			if (patch.parentId !== undefined) values.parent_id = patch.parentId;
 			if (patch.description !== undefined) values.description = patch.description;
 

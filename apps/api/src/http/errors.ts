@@ -1,9 +1,11 @@
 import {
+	AttributeValidationError,
 	ConflictError,
 	FieldChangeConflictError,
 	InsufficientStockError,
 	InvalidOperationError,
-	NotFoundError
+	NotFoundError,
+	VersionConflictError
 } from '@inventory/db';
 import type { ApiErrorBody } from '@inventory/shared';
 import type { Context } from 'hono';
@@ -27,9 +29,24 @@ export function toErrorResponse(err: unknown): {
 		const details = err.issues.map((i) => ({ path: i.path.join('.'), message: i.message }));
 		return { status: 400, body: body('validation', 'Request validation failed', details) };
 	}
-	if (err instanceof BadRequestError)
+	if (err instanceof AttributeValidationError) {
+		const details = err.issues.map((i) => ({
+			path: i.key ? `attributes.${i.key}` : 'attributes',
+			message: i.message
+		}));
+		return { status: 400, body: body('validation', 'Invalid attributes', details) };
+	}
+	if (err instanceof BadRequestError) {
 		return { status: 400, body: body('bad_request', err.message) };
+	}
 	if (err instanceof NotFoundError) return { status: 404, body: body('not_found', err.message) };
+	if (err instanceof VersionConflictError) {
+		const { expectedVersion, currentVersion } = err;
+		return {
+			status: 412,
+			body: body('version_conflict', err.message, { expectedVersion, currentVersion })
+		};
+	}
 	if (err instanceof FieldChangeConflictError) {
 		return { status: 409, body: body('field_change_conflict', err.message, err.violations) };
 	}

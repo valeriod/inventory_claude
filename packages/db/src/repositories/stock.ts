@@ -84,6 +84,14 @@ export async function applyStockDelta(
 	}
 
 	return inTransaction(ctx, async (tx) => {
+		if (input.projectId !== undefined && input.projectId !== null) {
+			const project = await tx.db
+				.selectFrom('projects')
+				.select('id')
+				.where('id', '=', input.projectId)
+				.executeTakeFirst();
+			if (!project) throw new InvalidOperationError(`Project ${input.projectId} does not exist`);
+		}
 		const now = tx.now();
 		const updated = await tx.db
 			.updateTable('items')

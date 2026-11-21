@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildAttributesSchema, isValidFieldValue } from './attributes.ts';
+import { attributeIssues, buildAttributesSchema, isValidFieldValue } from './attributes.ts';
 import { fieldDefsSchema, type FieldDefInput } from './fields.ts';
 
 const defs = fieldDefsSchema.parse([
@@ -70,7 +70,12 @@ describe('buildAttributesSchema', () => {
 	])('rejects %j (path %s)', (input, path) => {
 		const result = schema.safeParse(input);
 		expect(result.success).toBe(false);
-		expect(result.error?.issues.map((i) => i.path[0])).toContain(path);
+		expect(attributeIssues(result.error!).map((i) => i.key)).toContain(path);
+	});
+
+	it('reports every unknown key together with field errors', () => {
+		const result = schema.safeParse({ resistance: 'x', a: 1, b: 2 });
+		expect(attributeIssues(result.error!).map((i) => i.key)).toEqual(['resistance', 'a', 'b']);
 	});
 
 	it('keeps values of removed fields when allowed', () => {

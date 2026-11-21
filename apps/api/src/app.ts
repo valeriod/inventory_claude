@@ -6,6 +6,9 @@ import { createRepositories, type DatabaseConnection } from '@inventory/db';
 import { UNITS, type HealthResponse } from '@inventory/shared';
 import { handleError, notFound } from './http/errors.ts';
 import { categoryRoutes } from './routes/categories.ts';
+import { itemRoutes } from './routes/items.ts';
+import { locationRoutes } from './routes/locations.ts';
+import { lookupRoutes } from './routes/lookup.ts';
 import { VERSION } from './version.ts';
 
 export interface AppOptions {
@@ -24,6 +27,9 @@ export function createApp({ conn, staticDir }: AppOptions): Hono {
 	);
 	api.get('/units', (c) => c.json(UNITS));
 	api.route('/categories', categoryRoutes(repos));
+	api.route('/items', itemRoutes(repos));
+	api.route('/locations', locationRoutes(repos));
+	api.route('/lookup', lookupRoutes(repos));
 
 	api.all('*', notFound);
 	api.onError(handleError);

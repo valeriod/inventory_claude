@@ -19,3 +19,9 @@ export const SKU_SEQUENCE_DIGITS = 4;
 export function formatSku(prefix: string, sequence: number): string {
 	return `${prefix}${String(sequence).padStart(SKU_SEQUENCE_DIGITS, '0')}`;
 }
+
+/** Location codes are printed on bin labels as QR codes (/l/<code>), so they follow SKU rules. */
+export const locationCodeSchema = z
+	.string()
+	.trim()
+	.regex(SKU_PATTERN, 'Use letters, digits, ".", "_" or "-" (max 64 characters)');

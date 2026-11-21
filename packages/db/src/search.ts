@@ -30,11 +30,24 @@ export interface SearchableItem {
 	attributes: Attributes;
 }
 
-export function buildSearchText(item: SearchableItem): string {
+/**
+ * @param searchableKeys attribute keys to index (fields with `searchable: true`). When omitted,
+ *   every attribute value is indexed.
+ */
+export function buildSearchText(
+	item: SearchableItem,
+	searchableKeys?: ReadonlySet<string>
+): string {
 	const parts: string[] = [item.sku, item.name, item.description ?? '', item.barcode ?? ''];
-	for (const value of Object.values(item.attributes)) {
+	for (const [key, value] of Object.entries(item.attributes)) {
+		if (searchableKeys && !searchableKeys.has(key)) continue;
 		if (value === null || typeof value === 'boolean') continue;
 		parts.push(Array.isArray(value) ? value.join(' ') : String(value));
 	}
 	return [...new Set(tokenize(parts.join(' ')))].join(' ');
+}
+
+/** Keys of the fields whose values should be indexed for search. */
+export function searchableKeys(defs: readonly { key: string; searchable: boolean }[]): Set<string> {
+	return new Set(defs.filter((d) => d.searchable).map((d) => d.key));
 }

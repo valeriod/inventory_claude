@@ -256,9 +256,10 @@ Errors use a single shape: `{ "error": { "code", "message", "details"? } }`.
 
 | Status | Codes |
 |---|---|
-| 400 | `bad_request`, `validation` (details list the failing fields) |
+| 400 | `bad_request`, `validation` (details list the failing fields; attribute errors use `attributes.<key>`) |
 | 404 | `not_found` |
 | 409 | `conflict`, `field_change_conflict`, `insufficient_stock` |
+| 412 | `version_conflict` (If-Match did not match the item's current version) |
 | 422 | `invalid_operation` |
 
 ```
@@ -276,15 +277,28 @@ Categories
   GET    /api/units                  (unit table per unit kind)
 
 Items
-  GET    /api/items?q=&category=&location=&lowStock=&attr.color=red&attr.gauge_awg[gte]=18
-                    &sort=&page=&pageSize=
-  POST   /api/items
-  GET    /api/items/:sku
-  PATCH  /api/items/:sku             (If-Match: version; `sku` is not editable)
-  DELETE /api/items/:sku             (soft delete / archive)
-  GET    /api/items/lookup?code=…    (resolve scanned barcode/QR → item, location, or project)
-  POST   /api/items/:sku/movements   { delta, reason, note, projectId? }
-  GET    /api/items/:sku/movements
+  GET    /api/items?q=&category=&subcategories=&location=&sublocations=&lowStock=&includeArchived=
+                    &attr.color=red&attr.gauge_awg[gte]=18&attr.tags[contains]=smd
+                    &sort=name|sku|qty|updated&dir=asc|desc&page=&pageSize=
+                    → { items, total, page, pageSize }
+  POST   /api/items                  (201, ETag, Location; SKU generated when omitted)
+  GET    /api/items/:sku             (ETag: "<version>")
+  PATCH  /api/items/:sku             (If-Match optional → 412 on stale version; attributes are merged,
+                                      null clears a value; sku and quantity are not editable)
+  DELETE /api/items/:sku             (archive; ?permanent=true hard-deletes items without history)
+  POST   /api/items/:sku/restore
+  POST   /api/items/:sku/movements   { delta, reason: receive|consume|adjust, note?, projectId? }
+  GET    /api/items/:sku/movements   (?limit&offset, newest first)
+  POST   /api/items/:sku/count       { countedQty, note? } → movement for the difference (or none)
+  GET    /api/items/:sku/reservations
+
+Lookup (scanner)
+  GET    /api/lookup?code=…          (QR URL /i/<sku>, /l/<code>, /p/<id>; else SKU → barcode → location code)
+                                     (not under /api/items: "lookup" is a valid SKU)
+
+Attribute filters are typed using the fields of the selected category subtree (or all categories).
+Numeric fields support `eq`/`gte`/`lte`, yes/no fields `eq` (`true`/`false`), multi-select fields
+`contains` (the default for them), and other fields `eq`. Unknown or ambiguous keys → 400.
 
 Locations / Projects
   CRUD   /api/locations
@@ -419,7 +433,7 @@ The compose files and Caddyfile examples ship in `docker/`. Updating the guide i
 | **M0** ✅ | Project setup | Monorepo, lint/format, CI with SQLite + Postgres matrix, Docker compose, HTTPS dev |
 | **M1** ✅ | Data layer | Kysely setup, `DialectAdapter`, migrations for all tables, repositories (including the transactional stock-movement and reservation logic), seed data (`pnpm db:seed`: sample categories Resistors, Capacitors, ICs, Wire, Tools) |
 | **M2** ✅ | Categories, dynamic fields & units | Field-def schema, runtime Zod builder, inheritance, `units.ts` (base-unit conversion), category CRUD API + tests |
-| **M3** | Items & stock | Item and stock HTTP API on top of the M1 repositories, attribute validation against resolved field definitions, `searchable` flag, search and JSON-filter query parameters |
+| **M3** ✅ | Items & stock | Item and stock HTTP API on top of the M1 repositories, attribute validation against resolved field definitions, `searchable` flag, search and JSON-filter query parameters |
 | **M4** | PWA foundation | SvelteKit SPA, optional password login, layout, dashboard, search, item detail/edit with `DynamicForm`, category field editor |
 | **M5** | Scanning | `Scanner` component, lookup/adjust/receive flows, QR label PDF generation |
 | **M6** | Projects & reservations | Project CRUD, reservations with availability checks, pick list, consume/release |
