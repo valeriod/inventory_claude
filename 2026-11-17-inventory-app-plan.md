@@ -41,11 +41,11 @@ Build an inventory system for heterogeneous items (electronic components, electr
 | Layer | Choice | Rationale |
 |---|---|---|
 | Language | TypeScript end-to-end | Shared types/validation between API and PWA |
-| Frontend | SvelteKit 2 + Svelte 5 (runes), `adapter-static` (SPA mode) | Requested framework; static output is easy to serve and cache as a PWA |
+| Frontend | SvelteKit 3 + Svelte 5 (runes), `adapter-static` (SPA mode) | Requested framework; static output is easy to serve and cache as a PWA |
 | PWA | `@vite-pwa/sveltekit` (Workbox) | Manifest, service worker, install prompt, update flow |
 | UI | Tailwind CSS + a light component lib (e.g. Skeleton or bits-ui) | Fast, mobile-friendly |
 | Scanning | Native `BarcodeDetector` API, fallback to `zxing-wasm` | Native is fast on Android/Chrome; iOS Safari needs the WASM fallback |
-| API | Hono on Node 22 | Small, typed, fast; easy to test |
+| API | Hono on Node 24 LTS | Small, typed, fast; easy to test |
 | DB access | **Kysely** with `better-sqlite3` and `pg` dialects | One query builder, two dialects; thin enough to drop to raw SQL for JSON ops |
 | Migrations | Kysely migrations with per-dialect branches where needed | Single migration history for both DBs |
 | Validation | Zod (shared package) | Validates both fixed columns and dynamic custom fields |
@@ -371,7 +371,7 @@ Camera scanning requires **HTTPS** on the phone, so every option below ends with
 2. **Home server / NAS / Raspberry Pi + SQLite (recommended default):** `docker compose up -d` with a `./data` volume, reached over Tailscale with `tailscale serve`, which gives a real HTTPS cert and keeps the app off the public internet. In this setup, `APP_PASSWORD` is optional.
 3. **LAN without Tailscale:** Caddy in front, using its internal CA, plus steps to install the root cert on iOS and Android.
 4. **Public VPS:** compose with Caddy (automatic Let's Encrypt), with a firewall that allows only 80/443. `APP_PASSWORD` is mandatory here.
-5. **Postgres variant:** a compose override file that adds a `postgres:17` service.
+5. **Postgres variant:** a compose override file that adds a `postgres:18` service.
 6. **Operations:**
    - Backups: SQLite `VACUUM INTO` nightly with retention; `pg_dump` for Postgres.
    - Restoring from backup.
@@ -384,7 +384,7 @@ The compose files and Caddyfile examples ship in `docker/`. Updating the guide i
 
 | # | Milestone | Deliverables |
 |---|---|---|
-| **M0** | Project setup | Monorepo, lint/format, CI with SQLite + Postgres matrix, Docker compose, HTTPS dev |
+| **M0** ✅ | Project setup | Monorepo, lint/format, CI with SQLite + Postgres matrix, Docker compose, HTTPS dev |
 | **M1** | Data layer | Kysely setup, `DialectAdapter`, migrations for all tables, repositories, seed data (sample categories: Resistors, Capacitors, ICs, Wire, Tools) |
 | **M2** | Categories, dynamic fields & units | Field-def schema, runtime Zod builder, inheritance, `units.ts` (base-unit conversion), category CRUD API + tests |
 | **M3** | Items & stock | Item CRUD, attribute validation, movements ledger, atomic qty updates, search (FTS5 / tsvector) + JSON filters |

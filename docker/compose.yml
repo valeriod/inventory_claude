@@ -1,0 +1,23 @@
+# Default deployment: single container + SQLite file in ./data
+#   docker compose -f docker/compose.yml up -d --build
+name: inventory
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: inventory:latest
+    restart: unless-stopped
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      DATABASE_URL: sqlite:///data/inventory.db
+      # The port below is published on localhost only. If you expose it more widely,
+      # set APP_PASSWORD + SESSION_SECRET in .env and ALLOW_NO_AUTH=false.
+      ALLOW_NO_AUTH: ${ALLOW_NO_AUTH:-true}
+    volumes:
+      - ../data:/data
+    ports:
+      - '127.0.0.1:${PORT:-3000}:3000'

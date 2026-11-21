@@ -1,0 +1,25 @@
+{
+	"name": "@inventory/db",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc -p tsconfig.json",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"@inventory/shared": "workspace:*",
+		"better-sqlite3": "13.2.0",
+		"kysely": "^0.29.9",
+		"pg": "^8.23.1"
+	},
+	"devDependencies": {
+		"@types/better-sqlite3": "^9.6.0",
+		"@types/node": "^24.0.0",
+		"@types/pg": "^8.23.1",
+		"vitest": "^5.1.1"
+	}
+}
