@@ -168,7 +168,8 @@ const postgresAdapter: DialectAdapter = {
 		switch (errorCode(err)) {
 			case '23505':
 				return 'unique';
-			case '23503':
+			case '23503': // foreign_key_violation
+			case '23001': // restrict_violation (ON DELETE RESTRICT)
 				return 'foreign_key';
 			case '23514':
 				return 'check';
