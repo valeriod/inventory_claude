@@ -1,7 +1,8 @@
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
 import tailwindcss from '@tailwindcss/vite';
-import { defineConfig, type PluginOption } from 'vite';
+import type { PluginOption } from 'vite';
+import { defineConfig } from 'vitest/config';
 import mkcert from 'vite-plugin-mkcert';
 
 // `pnpm dev:https` sets DEV_HTTPS=1: serves over HTTPS on the LAN so phone cameras
@@ -24,6 +25,8 @@ if (https) plugins.push(mkcert());
 
 export default defineConfig({
 	plugins,
+	// Unit tests live next to the code; e2e/ belongs to Playwright.
+	test: { include: ['src/**/*.test.ts'] },
 	server: {
 		host: https ? true : 'localhost',
 		proxy: {

@@ -16,6 +16,7 @@
 		"typecheck": "pnpm -r typecheck",
 		"test": "pnpm -r test",
 		"test:pg": "TEST_DATABASE_URL=${TEST_DATABASE_URL:-postgres://inventory:inventory@localhost:5432/inventory_test} pnpm -r test",
+		"test:e2e": "pnpm --filter web test:e2e",
 		"db:migrate": "pnpm --filter api db:migrate",
 		"db:seed": "pnpm --filter api db:seed"
 	},

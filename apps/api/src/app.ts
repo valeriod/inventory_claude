@@ -4,6 +4,7 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { createRepositories, type DatabaseConnection } from '@inventory/db';
 import { UNITS, type HealthResponse } from '@inventory/shared';
+import { createAuth, type AuthConfig } from './auth.ts';
 import { handleError, notFound } from './http/errors.ts';
 import { categoryRoutes } from './routes/categories.ts';
 import { itemRoutes } from './routes/items.ts';
@@ -15,12 +16,18 @@ export interface AppOptions {
 	conn: DatabaseConnection;
 	/** Directory containing the built PWA (apps/web/build). Omit to serve the API only. */
 	staticDir?: string | undefined;
+	/** Optional single-user password protection (plan §7). */
+	auth?: AuthConfig;
 }
 
-export function createApp({ conn, staticDir }: AppOptions): Hono {
+export function createApp({ conn, staticDir, auth: authConfig }: AppOptions): Hono {
 	const repos = createRepositories(conn);
+	const auth = createAuth(authConfig ?? { password: undefined, sessionSecret: undefined });
 	const app = new Hono();
 	const api = new Hono();
+
+	api.use('*', auth.middleware);
+	api.route('/auth', auth.routes);
 
 	api.get('/health', (c) =>
 		c.json({ status: 'ok', version: VERSION, database: conn.dialect } satisfies HealthResponse)

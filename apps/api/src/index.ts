@@ -11,14 +11,18 @@ async function main(): Promise<void> {
 	const applied = await migrateToLatest(conn);
 	for (const m of applied) console.log(`migration ${m.migrationName}: ${m.status}`);
 
-	const app = createApp({ conn, staticDir: config.staticDir });
+	const app = createApp({
+		conn,
+		staticDir: config.staticDir,
+		auth: { password: config.appPassword, sessionSecret: config.sessionSecret }
+	});
 	const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {
 		console.log(
 			`inventory ${VERSION} listening on http://${config.host}:${info.port} (${conn.dialect})`
 		);
-		if (config.appPassword) {
-			console.warn('APP_PASSWORD is set, but login enforcement is not implemented yet (M4).');
-		}
+		console.log(
+			config.appPassword ? 'Password protection enabled' : 'Password protection disabled'
+		);
 	});
 
 	const shutdown = (signal: string) => {

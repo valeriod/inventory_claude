@@ -6,7 +6,7 @@ reports. It runs on SQLite or Postgres.
 
 See [`2026-11-17-inventory-app-plan.md`](2026-11-17-inventory-app-plan.md) for the full design and milestones.
 
-**Status:** M0–M3 are done (setup, data layer, categories with custom fields and units, items and stock API). Next is M4 (PWA foundation).
+**Status:** M0–M4 are done: setup, data layer, categories with custom fields and units, the items and stock API, and the web app foundation (login, search, items, categories, locations). Next is M5 (barcode and QR scanning).
 
 ## Requirements
 
@@ -50,6 +50,7 @@ keeps its copy under `~/.vite-plugin-mkcert`).
 | `pnpm typecheck` | `tsc` / `svelte-check` in every package |
 | `pnpm test` | Vitest against in-memory SQLite |
 | `pnpm test:pg` | Same suite against Postgres (`docker compose -f docker/compose.dev.yml up -d` first) |
+| `pnpm test:e2e` | Playwright end-to-end tests against the production build (`pnpm build` first; installs: `pnpm --filter web exec playwright install chromium`) |
 | `pnpm db:migrate` | Apply migrations to `DATABASE_URL` |
 | `pnpm db:seed` | Add demo categories, locations, items and a project (empty database only) |
 
@@ -61,7 +62,7 @@ Set environment variables in `.env` (see [`.env.example`](.env.example)):
 |---|---|---|
 | `DATABASE_URL` | `sqlite://./data/inventory.db` | `sqlite:///abs/path.db`, `sqlite::memory:` or `postgres://…` |
 | `HOST` / `PORT` | `127.0.0.1` / `3000` | Binding to a non-local address requires `APP_PASSWORD` or `ALLOW_NO_AUTH=true` |
-| `APP_PASSWORD` / `SESSION_SECRET` | none | Single-user password. **Login enforcement lands in M4** |
+| `APP_PASSWORD` / `SESSION_SECRET` | none | Single-user password; when set, the app shows a login screen and the API requires the session cookie |
 | `PUBLIC_URL` | none | Base URL encoded into printed QR labels |
 | `STATIC_DIR` | none (`pnpm start` uses `apps/web/build`) | Directory of the built PWA served by the API |
 
