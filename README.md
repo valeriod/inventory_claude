@@ -6,7 +6,7 @@ reports. It runs on SQLite or Postgres.
 
 See [`2026-11-17-inventory-app-plan.md`](2026-11-17-inventory-app-plan.md) for the full design and milestones.
 
-**Status:** M0 (project setup) is done. Features arrive from M1 onwards.
+**Status:** M0 (project setup) and M1 (data layer) are done. Next is M2 (categories, dynamic fields and units).
 
 ## Requirements
 
@@ -51,6 +51,7 @@ keeps its copy under `~/.vite-plugin-mkcert`).
 | `pnpm test` | Vitest against in-memory SQLite |
 | `pnpm test:pg` | Same suite against Postgres (`docker compose -f docker/compose.dev.yml up -d` first) |
 | `pnpm db:migrate` | Apply migrations to `DATABASE_URL` |
+| `pnpm db:seed` | Add demo categories, locations, items and a project (empty database only) |
 
 ## Configuration
 
@@ -82,7 +83,7 @@ apps/
   api/        Hono API server (Node). Bundled with esbuild for production
   web/        SvelteKit 3 PWA (static SPA, adapter-static)
 packages/
-  db/         Kysely connection (SQLite/Postgres), migrations
+  db/         Kysely connection (SQLite/Postgres), dialect adapter, migrations, repositories, seed data
   shared/     Zod schemas and types shared by API and PWA
 docker/       Dockerfile and compose files
 ```

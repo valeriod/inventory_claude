@@ -8,6 +8,7 @@
 		"build": "node scripts/build.mjs",
 		"start": "STATIC_DIR=${STATIC_DIR:-../web/build} node --env-file-if-exists=../../.env dist/server.js",
 		"db:migrate": "tsx --env-file-if-exists=../../.env src/migrate.ts",
+		"db:seed": "tsx --env-file-if-exists=../../.env src/seed.ts",
 		"typecheck": "tsc -p tsconfig.json",
 		"test": "vitest run"
 	},
