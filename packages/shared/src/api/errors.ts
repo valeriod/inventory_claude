@@ -6,6 +6,7 @@ export interface ApiErrorBody {
 			| 'validation'
 			| 'not_found'
 			| 'conflict'
+			| 'version_conflict'
 			| 'field_change_conflict'
 			| 'insufficient_stock'
 			| 'invalid_operation'

@@ -1,9 +1,22 @@
-import { skuSchema, type Attributes, type ItemWithAvailability } from '@inventory/shared';
+import {
+	attributeIssues,
+	buildAttributesSchema,
+	skuSchema,
+	type Attributes,
+	type FieldDef,
+	type ItemWithAvailability
+} from '@inventory/shared';
 import { sql, type Kysely, type RawBuilder, type SqlBool } from 'kysely';
 import type { ScalarValue } from '../dialect.ts';
-import { ConflictError, InvalidOperationError, NotFoundError } from '../errors.ts';
+import {
+	AttributeValidationError,
+	ConflictError,
+	InvalidOperationError,
+	NotFoundError,
+	VersionConflictError
+} from '../errors.ts';
 import type { Database } from '../schema.ts';
-import { buildSearchText } from '../search.ts';
+import { buildSearchText, searchableKeys } from '../search.ts';
 import { CategoryRepository } from './categories.ts';
 import { inTransaction, withConstraintErrors, type RepoContext } from './context.ts';
 import { applyStockDelta } from './stock.ts';
@@ -19,6 +32,7 @@ export interface CreateItemInput {
 	qtyMin?: number | null;
 	locationId?: number | null;
 	barcode?: string | null;
+	/** Validated against the category's resolved field definitions. */
 	attributes?: Attributes;
 }
 
@@ -30,7 +44,10 @@ export interface UpdateItemInput {
 	qtyMin?: number | null;
 	locationId?: number | null;
 	barcode?: string | null;
-	/** Replaces the whole attributes object. */
+	/**
+	 * Replaces the whole attributes object. Keys the item already has may be kept even if no
+	 * field declares them any more (values of removed fields survive edits).
+	 */
 	attributes?: Attributes;
 }
 
@@ -44,7 +61,7 @@ export type ItemSort = 'name' | 'sku' | 'qty' | 'updated';
 export interface ItemFilter {
 	q?: string;
 	categoryIds?: number[];
-	locationId?: number;
+	locationIds?: number[];
 	/** Available quantity at or below qty_min. */
 	lowStock?: boolean;
 	includeArchived?: boolean;
@@ -79,6 +96,18 @@ function assertQty(value: number | null | undefined, name: string): void {
 	if (!Number.isSafeInteger(value) || value < 0) {
 		throw new InvalidOperationError(`${name} must be a non-negative whole number of base units`);
 	}
+}
+
+function validateAttributes(
+	defs: readonly FieldDef[],
+	attributes: Attributes,
+	existingKeys: Iterable<string> = []
+): Attributes {
+	const result = buildAttributesSchema(defs, { allowUnknownKeys: existingKeys }).safeParse(
+		attributes
+	);
+	if (result.success) return result.data;
+	throw new AttributeValidationError(attributeIssues(result.error));
 }
 
 /** Items joined with the sum of their open reservations. */
@@ -167,8 +196,10 @@ export class ItemRepository {
 				sql<SqlBool>`${sql.ref('items.category_id')} in (${sql.join(filter.categoryIds)})`
 			);
 		}
-		if (filter.locationId !== undefined) {
-			conds.push(sql<SqlBool>`${sql.ref('items.location_id')} = ${filter.locationId}`);
+		if (filter.locationIds?.length) {
+			conds.push(
+				sql<SqlBool>`${sql.ref('items.location_id')} in (${sql.join(filter.locationIds)})`
+			);
 		}
 		if (filter.lowStock) {
 			conds.push(
@@ -226,47 +257,68 @@ export class ItemRepository {
 		return { items: rows.map((r) => this.toItem(r)), total: Number(count.total) };
 	}
 
+	/** Resolved field definitions of a category referenced by an item write. */
+	private async fieldsOf(tx: RepoContext, categoryId: number): Promise<FieldDef[]> {
+		try {
+			return await new CategoryRepository(tx).resolvedFieldDefs(categoryId);
+		} catch (err) {
+			if (err instanceof NotFoundError) {
+				throw new InvalidOperationError(`Category ${categoryId} does not exist`);
+			}
+			throw err;
+		}
+	}
+
+	private async assertLocationExists(tx: RepoContext, locationId: number | null | undefined) {
+		if (locationId === null || locationId === undefined) return;
+		const row = await tx.db
+			.selectFrom('locations')
+			.select('id')
+			.where('id', '=', locationId)
+			.executeTakeFirst();
+		if (!row) throw new InvalidOperationError(`Location ${locationId} does not exist`);
+	}
+
 	async create(input: CreateItemInput): Promise<ItemWithAvailability> {
 		assertQty(input.qtyOnHand, 'qtyOnHand');
 		assertQty(input.qtyMin, 'qtyMin');
 
 		return inTransaction(this.ctx, async (tx) => {
-			const categories = new CategoryRepository(tx);
+			const defs = await this.fieldsOf(tx, input.categoryId);
+			const attributes = validateAttributes(defs, input.attributes ?? {});
+			await this.assertLocationExists(tx, input.locationId);
+
 			const sku =
 				input.sku !== undefined
 					? skuSchema.parse(input.sku)
-					: await categories.nextSku(input.categoryId);
+					: await new CategoryRepository(tx).nextSku(input.categoryId);
 			const barcode = normalizeBarcode(input.barcode);
 			await this.assertUnique(tx, sku, barcode);
 
-			const attributes = input.attributes ?? {};
 			const name = input.name.trim();
 			const description = input.description ?? null;
 			const now = tx.now();
 
-			await withConstraintErrors(
-				tx,
-				{
-					unique: `SKU "${sku}" or barcode already exists`,
-					foreign_key: 'Category or location does not exist'
-				},
-				() =>
-					tx.db
-						.insertInto('items')
-						.values({
-							sku,
-							category_id: input.categoryId,
-							name,
-							description,
-							qty_min: input.qtyMin ?? null,
-							location_id: input.locationId ?? null,
-							barcode,
-							attributes: tx.adapter.json(attributes),
-							search_text: buildSearchText({ sku, name, description, barcode, attributes }),
-							created_at: now,
-							updated_at: now
-						})
-						.execute()
+			await withConstraintErrors(tx, { unique: `SKU "${sku}" or barcode already exists` }, () =>
+				tx.db
+					.insertInto('items')
+					.values({
+						sku,
+						category_id: input.categoryId,
+						name,
+						description,
+						qty_min: input.qtyMin ?? null,
+						location_id: input.locationId ?? null,
+						barcode,
+						attributes: tx.adapter.json(attributes),
+						search_text: buildSearchText(
+							{ sku, name, description, barcode, attributes },
+							searchableKeys(defs)
+						),
+						created_at: now,
+						updated_at: now
+					})
+					.execute()
 			);
 
 			if (input.qtyOnHand) {
@@ -314,62 +366,71 @@ export class ItemRepository {
 
 		return inTransaction(this.ctx, async (tx) => {
 			const current = await new ItemRepository(tx).get(sku);
+			if (expectedVersion !== undefined && expectedVersion !== current.version) {
+				throw new VersionConflictError(sku, expectedVersion, current.version);
+			}
 
-			if (patch.categoryId !== undefined && patch.categoryId !== current.categoryId) {
+			const categoryId = patch.categoryId ?? current.categoryId;
+			if (categoryId !== current.categoryId) {
 				const categories = new CategoryRepository(tx);
-				const [from, to] = await Promise.all([
-					categories.get(current.categoryId),
-					categories.get(patch.categoryId)
-				]);
+				const from = await categories.get(current.categoryId);
+				const to = await categories.find(categoryId);
+				if (!to) throw new InvalidOperationError(`Category ${categoryId} does not exist`);
 				if (from.unitKind !== to.unitKind) {
 					throw new InvalidOperationError(
 						`Cannot move an item from a "${from.unitKind}" category to a "${to.unitKind}" category`
 					);
 				}
 			}
+			if (patch.locationId !== undefined) await this.assertLocationExists(tx, patch.locationId);
+
+			const defs = await this.fieldsOf(tx, categoryId);
+			const attributes =
+				patch.attributes !== undefined || categoryId !== current.categoryId
+					? validateAttributes(
+							defs,
+							patch.attributes ?? current.attributes,
+							Object.keys(current.attributes)
+						)
+					: current.attributes;
 
 			const barcode =
 				patch.barcode !== undefined ? normalizeBarcode(patch.barcode) : current.barcode;
 			if (patch.barcode !== undefined && barcode) await this.assertBarcodeFree(tx, barcode, sku);
 
-			const next = {
-				name: patch.name !== undefined ? patch.name.trim() : current.name,
-				description: patch.description !== undefined ? patch.description : current.description,
-				attributes: patch.attributes ?? current.attributes,
-				barcode
-			};
+			const name = patch.name !== undefined ? patch.name.trim() : current.name;
+			const description = patch.description !== undefined ? patch.description : current.description;
 
 			const values: Record<string, unknown> = {
-				name: next.name,
-				description: next.description,
-				barcode: next.barcode,
-				attributes: tx.adapter.json(next.attributes),
-				search_text: buildSearchText({ sku, ...next }),
+				category_id: categoryId,
+				name,
+				description,
+				barcode,
+				attributes: tx.adapter.json(attributes),
+				search_text: buildSearchText(
+					{ sku, name, description, barcode, attributes },
+					searchableKeys(defs)
+				),
 				updated_at: tx.now()
 			};
-			if (patch.categoryId !== undefined) values.category_id = patch.categoryId;
 			if (patch.qtyMin !== undefined) values.qty_min = patch.qtyMin;
 			if (patch.locationId !== undefined) values.location_id = patch.locationId;
 
 			const updated = await withConstraintErrors(
 				tx,
-				{
-					unique: 'Barcode is already assigned',
-					foreign_key: 'Category or location does not exist'
-				},
+				{ unique: 'Barcode is already assigned' },
 				() =>
 					tx.db
 						.updateTable('items')
 						.set(values)
 						.set((eb) => ({ version: eb('version', '+', 1) }))
 						.where('sku', '=', sku)
-						.$if(expectedVersion !== undefined, (q) => q.where('version', '=', expectedVersion!))
+						.where('version', '=', current.version)
 						.executeTakeFirst()
 			);
 			if (updated.numUpdatedRows === 0n) {
-				throw new ConflictError(
-					`Item ${sku} was changed since it was loaded (version ${expectedVersion}, now ${current.version}); reload and try again`
-				);
+				const now = await new ItemRepository(tx).get(sku);
+				throw new VersionConflictError(sku, expectedVersion ?? current.version, now.version);
 			}
 			return new ItemRepository(tx).get(sku);
 		});

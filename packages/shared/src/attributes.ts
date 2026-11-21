@@ -74,23 +74,31 @@ export function buildAttributesSchema(
 	defs: readonly FieldDef[],
 	options: AttributesSchemaOptions = {}
 ): z.ZodType<Attributes> {
-	const shape = Object.fromEntries(defs.map((d) => [d.key, fieldValueSchema(d)]));
-	const allowed = new Set(options.allowUnknownKeys ?? []);
-	return z
-		.looseObject(shape)
-		.superRefine((value, ctx) => {
-			for (const key of Object.keys(value)) {
-				if (!(key in shape) && !allowed.has(key)) {
-					ctx.addIssue({ code: 'custom', path: [key], message: `Unknown field "${key}"` });
-				}
-			}
-		})
-		.transform((value) => {
-			// Drop optional fields that were omitted (undefined) so they are not stored.
-			const out: Attributes = {};
-			for (const [k, v] of Object.entries(value)) if (v !== undefined) out[k] = v as AttributeValue;
-			return out;
-		}) as unknown as z.ZodType<Attributes>;
+	const shape: Record<string, z.ZodType> = {};
+	// Previously stored keys without a field definition are passed through unchanged.
+	for (const key of options.allowUnknownKeys ?? []) shape[key] = z.unknown();
+	for (const def of defs) shape[def.key] = fieldValueSchema(def);
+	return z.strictObject(shape).transform((value) => {
+		// Drop optional fields that were omitted (undefined) so they are not stored.
+		const out: Attributes = {};
+		for (const [k, v] of Object.entries(value)) if (v !== undefined) out[k] = v as AttributeValue;
+		return out;
+	}) as unknown as z.ZodType<Attributes>;
+}
+
+export interface AttributeIssue {
+	/** Attribute key, or '' for object-level issues. */
+	key: string;
+	message: string;
+}
+
+/** Flatten a validation error into one issue per attribute key (unknown keys listed individually). */
+export function attributeIssues(error: z.ZodError): AttributeIssue[] {
+	return error.issues.flatMap((issue) =>
+		issue.code === 'unrecognized_keys'
+			? issue.keys.map((key) => ({ key, message: `Unknown field "${key}"` }))
+			: [{ key: String(issue.path[0] ?? ''), message: issue.message }]
+	);
 }
 
 /** Validate one existing value against a (possibly changed) definition. */

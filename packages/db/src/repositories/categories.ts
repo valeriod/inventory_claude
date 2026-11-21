@@ -27,6 +27,7 @@ import {
 } from '../errors.ts';
 import type { CategoriesTable } from '../schema.ts';
 import { inTransaction, withConstraintErrors, type RepoContext } from './context.ts';
+import { reindexItems } from './search-index.ts';
 
 export interface CreateCategoryInput {
 	name: string;
@@ -304,6 +305,9 @@ export class CategoryRepository {
 						.returningAll()
 						.executeTakeFirstOrThrow()
 			);
+			if (patch.fieldDefs !== undefined || next.parentId !== current.parentId) {
+				await reindexItems(tx, proposed, subtreeIds(proposed, id));
+			}
 			return this.toCategory(row);
 		});
 	}
@@ -360,6 +364,8 @@ export class CategoryRepository {
 				.where('id', '=', id)
 				.returningAll()
 				.executeTakeFirstOrThrow();
+			const updated = all.map((c) => (c.id === id ? { ...c, fieldDefs } : c));
+			await reindexItems(tx, updated, subtreeIds(updated, id));
 			return this.toCategory(row);
 		});
 	}

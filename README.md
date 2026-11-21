@@ -6,7 +6,7 @@ reports. It runs on SQLite or Postgres.
 
 See [`2026-11-17-inventory-app-plan.md`](2026-11-17-inventory-app-plan.md) for the full design and milestones.
 
-**Status:** M0–M2 are done (setup, data layer, categories with custom fields and units). Next is M3 (items and stock API).
+**Status:** M0–M3 are done (setup, data layer, categories with custom fields and units, items and stock API). Next is M4 (PWA foundation).
 
 ## Requirements
 
