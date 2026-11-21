@@ -15,11 +15,6 @@ export interface DatabaseConnection {
 	close: () => Promise<void>;
 }
 
-export interface ConnectOptions {
-	/** Postgres only: schema to use via search_path (used to isolate test runs). */
-	schema?: string;
-}
-
 // Postgres returns BIGINT (int8) as strings by default. All quantities are BIGINT base units
 // (plan §3.4) and stay well within the safe integer range.
 const INT8_OID = 20;
@@ -37,9 +32,7 @@ pg.types.setTypeParser(TIMESTAMPTZ_OID, (value) => {
 	return parsed instanceof Date ? parsed.toISOString() : parsed;
 });
 
-const SCHEMA_NAME = /^[a-z_][a-z0-9_]{0,62}$/;
-
-export function connect(databaseUrl: string, options: ConnectOptions = {}): DatabaseConnection {
+export function connect(databaseUrl: string): DatabaseConnection {
 	const target = parseDatabaseUrl(databaseUrl);
 
 	if (target.dialect === 'sqlite') {
@@ -54,14 +47,7 @@ export function connect(databaseUrl: string, options: ConnectOptions = {}): Data
 		return { db, dialect: 'sqlite', adapter: adapterFor('sqlite'), close: () => db.destroy() };
 	}
 
-	if (options.schema !== undefined && !SCHEMA_NAME.test(options.schema)) {
-		throw new Error(`Invalid schema name ${JSON.stringify(options.schema)}`);
-	}
-	const pool = new pg.Pool({
-		connectionString: target.connectionString,
-		max: 10,
-		...(options.schema ? { options: `-c search_path=${options.schema}` } : {})
-	});
+	const pool = new pg.Pool({ connectionString: target.connectionString, max: 10 });
 	const db = new Kysely<Database>({ dialect: new PostgresDialect({ pool }) });
 	return { db, dialect: 'postgres', adapter: adapterFor('postgres'), close: () => db.destroy() };
 }

@@ -13,7 +13,6 @@ const CORE_TABLES = [
 	'stock_movements'
 ];
 
-/** Resolves through the connection's search_path, unlike introspection (which lists all schemas). */
 async function tableExists(conn: TestDatabase, name: string): Promise<boolean> {
 	const query =
 		conn.dialect === 'sqlite'

@@ -1,4 +1,4 @@
-export { connect, type ConnectOptions, type DatabaseConnection } from './connect.ts';
+export { connect, type DatabaseConnection } from './connect.ts';
 export { adapterFor, type DialectAdapter, type JsonCast, type ScalarValue } from './dialect.ts';
 export * from './errors.ts';
 export { migrateToEmpty, migrateToLatest } from './migrate.ts';

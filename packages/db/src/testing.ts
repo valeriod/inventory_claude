@@ -5,14 +5,25 @@ import { migrateToLatest } from './migrate.ts';
 import { parseDatabaseUrl } from './url.ts';
 
 export interface TestDatabase extends DatabaseConnection {
-	/** Close the connection and drop the isolated schema (Postgres). */
+	/** Close the connection and drop the throwaway database (Postgres). */
 	cleanup: () => Promise<void>;
 }
 
+async function admin(connectionString: string, statement: string): Promise<void> {
+	const client = new pg.Client({ connectionString });
+	await client.connect();
+	try {
+		await client.query(statement);
+	} finally {
+		await client.end();
+	}
+}
+
 /**
- * A fresh, migrated database for one test file.
- * TEST_DATABASE_URL selects the dialect (default: in-memory SQLite). On Postgres, each call gets
- * its own schema so test files can run in parallel against one database.
+ * A fresh, migrated database for one test.
+ * TEST_DATABASE_URL selects the dialect (default: in-memory SQLite). On Postgres, each call
+ * creates its own database next to the one in the URL. (Schemas are not isolated enough:
+ * Kysely's migrator and introspection look at tables in every schema of the database.)
  */
 export async function createTestDatabase(): Promise<TestDatabase> {
 	const url = process.env.TEST_DATABASE_URL ?? 'sqlite::memory:';
@@ -24,28 +35,24 @@ export async function createTestDatabase(): Promise<TestDatabase> {
 		return { ...conn, cleanup: conn.close };
 	}
 
-	const schema = `test_${randomBytes(6).toString('hex')}`;
-	const admin = new pg.Client({ connectionString: target.connectionString });
-	await admin.connect();
-	try {
-		await admin.query(`create schema ${schema}`);
-	} finally {
-		await admin.end();
-	}
+	const name = `test_${randomBytes(6).toString('hex')}`;
+	const testUrl = new URL(target.connectionString);
+	testUrl.pathname = `/${name}`;
 
-	const conn = connect(url, { schema });
-	await migrateToLatest(conn);
+	await admin(target.connectionString, `create database ${name}`);
+	const conn = connect(testUrl.toString());
+	try {
+		await migrateToLatest(conn);
+	} catch (err) {
+		await conn.close();
+		await admin(target.connectionString, `drop database if exists ${name} with (force)`);
+		throw err;
+	}
 	return {
 		...conn,
 		cleanup: async () => {
 			await conn.close();
-			const dropper = new pg.Client({ connectionString: target.connectionString });
-			await dropper.connect();
-			try {
-				await dropper.query(`drop schema ${schema} cascade`);
-			} finally {
-				await dropper.end();
-			}
+			await admin(target.connectionString, `drop database if exists ${name} with (force)`);
 		}
 	};
 }
