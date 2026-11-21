@@ -1,0 +1,32 @@
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Dependencies & build output
+node_modules/
+dist/
+build/
+.svelte-kit/
+coverage/
+*.tsbuildinfo
+
+# Env & local data
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Dev certificates
+certs/
+*.pem
+
+# Test artifacts
+playwright-report/
+test-results/

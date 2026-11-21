@@ -1,0 +1,420 @@
+# Inventory App — Implementation Plan
+
+**Date:** 2026-11-17 (revised 2026-11-21 with decisions, see §10)
+**Status:** Approved for implementation
+
+## 1. Goals
+
+Build an inventory system for heterogeneous items (electronic components, electrical wire, tools, consumables, …) where:
+
+- **Categories** are user-defined, and each category declares its own **custom fields** (e.g. Resistor → resistance, tolerance, package; Wire → gauge, color, insulation, length unit).
+- Each **item record** has a `sku` primary key, a `qty_on_hand`, and a JSON object holding the category-specific field values.
+- A **Svelte PWA** lets users search items, generate inventory reports, reserve parts for projects, and scan barcodes / QR codes with a phone camera.
+- The backend runs on **SQLite** (simplest, default) or **Postgres** (if you already run one), selected by configuration.
+
+### Non-goals (v1)
+
+- Purchasing / supplier ordering workflow
+- Multi-tenant SaaS (one inventory per deployment)
+- Multiple users / roles (single user; see §7)
+- Stock for one SKU split across several locations
+- Full offline write sync with conflict resolution (v1 is offline-read, see §7.4)
+
+## 2. Architecture Overview
+
+```
+┌──────────────────────────────┐        HTTPS/JSON        ┌──────────────────────────────┐
+│  PWA (SvelteKit, static SPA) │ ───────────────────────▶ │  API server (Node + Hono)    │
+│  - Search / item views       │                          │  - REST endpoints            │
+│  - Reports                   │ ◀─────────────────────── │  - Validation (Zod)          │
+│  - Project reservations      │                          │  - Auth                      │
+│  - Camera barcode/QR scan    │                          │  - Kysely query builder      │
+│  - Service worker / cache    │                          └──────────────┬───────────────┘
+└──────────────────────────────┘                                         │
+                                                              ┌──────────┴──────────┐
+                                                              │ SQLite  │ Postgres  │
+                                                              └─────────────────────┘
+```
+
+### Tech stack
+
+| Layer | Choice | Rationale |
+|---|---|---|
+| Language | TypeScript end-to-end | Shared types/validation between API and PWA |
+| Frontend | SvelteKit 2 + Svelte 5 (runes), `adapter-static` (SPA mode) | Requested framework; static output is easy to serve and cache as a PWA |
+| PWA | `@vite-pwa/sveltekit` (Workbox) | Manifest, service worker, install prompt, update flow |
+| UI | Tailwind CSS + a light component lib (e.g. Skeleton or bits-ui) | Fast, mobile-friendly |
+| Scanning | Native `BarcodeDetector` API, fallback to `zxing-wasm` | Native is fast on Android/Chrome; iOS Safari needs the WASM fallback |
+| API | Hono on Node 22 | Small, typed, fast; easy to test |
+| DB access | **Kysely** with `better-sqlite3` and `pg` dialects | One query builder, two dialects; thin enough to drop to raw SQL for JSON ops |
+| Migrations | Kysely migrations with per-dialect branches where needed | Single migration history for both DBs |
+| Validation | Zod (shared package) | Validates both fixed columns and dynamic custom fields |
+| Reports | Server-side CSV + PDF (`pdfkit`) or client-side print CSS | CSV first, PDF later |
+| Testing | Vitest (unit/API), Playwright (E2E), test matrix on both DBs | Dual-DB support must be proven continuously |
+
+### Repository layout (pnpm monorepo)
+
+```
+inventory/
+├─ apps/
+│  ├─ web/            # SvelteKit PWA
+│  └─ api/            # Hono API server
+├─ packages/
+│  ├─ shared/         # Zod schemas, types, field-definition logic
+│  └─ db/             # Kysely setup, dialect adapters, migrations, repositories
+├─ docker/            # Dockerfile, docker-compose (api + postgres)
+└─ docs/
+```
+
+> Alternative considered: a single SvelteKit app with server routes (`adapter-node`) instead of a separate API. Simpler to deploy, but couples the PWA build to the server and makes the static/offline story harder. A separate API is recommended; it can still be served from the same origin behind a reverse proxy.
+
+## 3. Data Model
+
+### 3.1 Core tables
+
+**`categories`**
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | integer PK | |
+| `name` | text, unique | e.g. "Resistors" |
+| `parent_id` | integer FK → categories, nullable | Optional hierarchy (Electronics → Passives → Resistors) |
+| `sku_prefix` | text, nullable | Used for SKU generation, e.g. `RES-` |
+| `unit_kind` | text | `count` \| `length` \| `mass` \| `volume` — determines the integer base unit (§3.4) |
+| `display_unit` | text | Unit shown in the UI, e.g. `pcs`, `m`, `ft`, `g`, `kg` |
+| `field_defs` | JSON | Array of field definitions (§3.2) |
+| `created_at`, `updated_at` | timestamp | |
+
+**`items`**
+
+| Column | Type | Notes |
+|---|---|---|
+| `sku` | text **PK** | User-supplied or generated; **immutable** after creation (§10) |
+| `category_id` | integer FK → categories | |
+| `name` | text | Human-readable title |
+| `description` | text, nullable | |
+| `qty_on_hand` | integer (BIGINT on PG) | In base units of the category's `unit_kind` (§3.4); `CHECK (qty_on_hand >= 0)` |
+| `qty_min` | integer, nullable | Reorder threshold for low-stock report, base units |
+| `location_id` | integer FK → locations, nullable | Exactly one location per SKU (§10) |
+| `barcode` | text, nullable, unique | Manufacturer barcode (EAN/UPC) if different from SKU |
+| `attributes` | JSON (`jsonb` on PG, `text` w/ JSON1 on SQLite) | Custom field values keyed by field `key` |
+| `search_text` | text | Denormalized: name + description + SKU + attribute values, for search |
+| `created_at`, `updated_at` | timestamp | |
+| `version` | integer | Optimistic concurrency |
+
+**`locations`** — `id`, `name`, `parent_id` (Room → Shelf → Bin), `code` (printed on bin labels as QR).
+
+**`projects`** — `id`, `name`, `description`, `status` (`planning` | `active` | `completed` | `cancelled`), timestamps.
+
+**`reservations`** (parts set aside for projects)
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | integer PK | |
+| `project_id` | FK → projects | |
+| `sku` | FK → items | |
+| `qty_reserved` | integer | Base units |
+| `status` | `reserved` \| `consumed` \| `released` | |
+| `note` | text | |
+| timestamps | | |
+
+`qty_available = qty_on_hand − SUM(qty_reserved WHERE status = 'reserved')` — computed in a view / query, not stored.
+
+**`stock_movements`** (append-only ledger / audit trail)
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | integer PK | |
+| `sku` | FK → items | |
+| `delta` | integer | Base units; +received / −used / ±adjust |
+| `reason` | `receive` \| `consume` \| `adjust` \| `count` \| `reserve_consume` | |
+| `project_id` | FK, nullable | |
+| `note` | text | |
+| `created_at` | timestamp | |
+
+Every quantity change goes through a movement row in the same transaction as the `qty_on_hand` update. This gives history, undo, and usage reports for free.
+
+There is no `users` table: the app is single-user (§7).
+
+### 3.2 Category field definitions
+
+`categories.field_defs` is a JSON array; each entry:
+
+```json
+{
+  "key": "resistance",
+  "label": "Resistance",
+  "type": "quantity",
+  "unit": "Ω",
+  "required": true,
+  "searchable": true,
+  "filterable": true,
+  "showInList": true,
+  "order": 10
+}
+```
+
+Supported `type` values (v1):
+
+| Type | Stored as | Extra options |
+|---|---|---|
+| `text` | string | `maxLength`, `pattern` |
+| `number` | number | `min`, `max`, `integer` |
+| `quantity` | number (base unit) | `unit`, `allowedPrefixes` (k, M, µ…) — UI parses `4.7k` → `4700` |
+| `boolean` | boolean | |
+| `enum` | string | `options: string[]` |
+| `multi_enum` | string[] | `options: string[]` |
+| `date` | ISO string | |
+| `url` | string | e.g. datasheet link |
+
+- The shared package turns `field_defs` into a **Zod schema at runtime**, used by the API (authoritative validation on write) and by the PWA (form generation + client validation).
+- **Inheritance:** a child category inherits parent fields (Passives → `package`, `mounting`; Resistors adds `resistance`, `tolerance`).
+- **Schema evolution:** adding a field is free; removing a field hides it (data stays in JSON); renaming a `key` or changing `type` runs a guided migration job that rewrites `attributes` for that category's items.
+
+### 3.3 Example records
+
+```json
+// category: Resistors (unit_kind: count)
+{ "sku": "RES-0001", "name": "10kΩ 1% 0603", "qty_on_hand": 450,
+  "attributes": { "resistance": 10000, "tolerance": "1%", "package": "0603", "power_w": 0.1 } }
+
+// category: Wire (unit_kind: length, display_unit: m) — 37.5 m stored as 37500 mm
+{ "sku": "WIR-0012", "name": "Hookup wire 22AWG red", "qty_on_hand": 37500,
+  "attributes": { "gauge_awg": 22, "color": "red", "stranded": true, "insulation": "PVC" } }
+
+// category: Tools
+{ "sku": "TOL-0003", "name": "Wire stripper", "qty_on_hand": 1,
+  "attributes": { "brand": "Knipex", "model": "12 62 180", "serial": "…" } }
+```
+
+### 3.4 Quantities
+
+All quantities (`qty_on_hand`, `qty_min`, `qty_reserved`, `delta`) are stored as **whole numbers in a small base unit**. This is exact on both databases, so there are no floating-point or decimal-type differences between them.
+
+| `unit_kind` | Base unit (stored) | Allowed display units (conversion factor to base) |
+|---|---|---|
+| `count` | 1 piece | `pcs` (1) |
+| `length` | 1 mm | `mm` (1), `cm` (10), `m` (1000), `in` (25.4 → rounded), `ft` (304.8 → rounded) |
+| `mass` | 1 mg | `mg` (1), `g` (1000), `kg` (1 000 000), `oz` (28 349.5 → rounded) |
+| `volume` | 1 µL | `mL` (1000), `L` (1 000 000) |
+
+- The table above lives in `packages/shared/units.ts`, along with `toBase(value, unit)` and `fromBase(int, unit)`. The API and the UI both use these functions, and the API only ever receives and returns base-unit integers.
+- Imperial input is converted and rounded to the nearest base unit (0.5 mm or less of error per entry, which is negligible for wire).
+- The UI formats values for display (`37500` → "37.5 m") and accepts input in any allowed unit for the category.
+- Columns are `INTEGER` on SQLite (64-bit) and `BIGINT` on Postgres. In JS, values stay below `Number.MAX_SAFE_INTEGER` (that is 9 billion metres of wire), so plain `number` is fine. Configure `pg` to parse int8 as number.
+- A category's `unit_kind` cannot change once it has items. Its `display_unit` can change freely, because stored values are not affected.
+
+### 3.5 Dual-database JSON strategy
+
+| Concern | SQLite | Postgres |
+|---|---|---|
+| Column type | `TEXT` + `CHECK (json_valid(attributes))` | `JSONB` |
+| Read a field | `json_extract(attributes, '$.gauge_awg')` | `attributes->>'gauge_awg'` |
+| Containment filter | `json_extract(...) = ?` | `attributes @> '{"color":"red"}'` (GIN index) |
+| Indexing | Expression index per hot field, created on demand | GIN on `attributes` + optional expression indexes |
+| Full-text search | FTS5 virtual table on `search_text` | `tsvector` generated column + GIN, `pg_trgm` for fuzzy |
+
+All dialect differences live behind a small **`DialectAdapter`** interface in `packages/db`:
+
+```ts
+interface DialectAdapter {
+  jsonField(column: string, key: string, cast?: 'text' | 'number' | 'boolean'): RawBuilder<unknown>;
+  jsonEquals(column: string, key: string, value: unknown): RawBuilder<boolean>;
+  fullTextMatch(query: string): RawBuilder<boolean>;
+  ensureFieldIndex(categoryId: number, key: string): Promise<void>;
+}
+```
+
+Repositories never write dialect-specific SQL directly. CI runs the full test suite against both databases.
+
+## 4. API Design (REST, JSON)
+
+All quantities in requests and responses are integers in base units.
+
+```
+Auth (only active when APP_PASSWORD is set, see §7)
+  POST   /api/auth/login             { password } → session cookie (httpOnly)
+  POST   /api/auth/logout
+
+Categories
+  GET    /api/categories             (tree, with resolved/inherited field_defs)
+  POST   /api/categories
+  GET    /api/categories/:id
+  PATCH  /api/categories/:id         (field_defs changes validated for compatibility)
+  DELETE /api/categories/:id         (only if empty)
+
+Items
+  GET    /api/items?q=&category=&location=&lowStock=&attr.color=red&attr.gauge_awg[gte]=18
+                    &sort=&page=&pageSize=
+  POST   /api/items
+  GET    /api/items/:sku
+  PATCH  /api/items/:sku             (If-Match: version; `sku` is not editable)
+  DELETE /api/items/:sku             (soft delete / archive)
+  GET    /api/items/lookup?code=…    (resolve scanned barcode/QR → item, location, or project)
+  POST   /api/items/:sku/movements   { delta, reason, note, projectId? }
+  GET    /api/items/:sku/movements
+
+Locations / Projects
+  CRUD   /api/locations
+  CRUD   /api/projects
+  GET    /api/projects/:id/reservations
+  POST   /api/projects/:id/reservations      { sku, qty }   → 409 if insufficient available qty
+  PATCH  /api/reservations/:id               { qty | status: consumed | released }
+  POST   /api/projects/:id/consume-all       (converts reservations into stock movements)
+
+Reports
+  GET    /api/reports/inventory?category=&location=&format=json|csv|pdf
+  GET    /api/reports/low-stock
+  GET    /api/reports/project/:id            (BOM / pick list with shortages)
+  GET    /api/reports/movements?from=&to=&sku=
+  GET    /api/reports/valuation              (if unit cost field is added)
+
+Labels
+  GET    /api/labels?skus=…&format=pdf       (printable QR labels for items/bins)
+
+Import / Export
+  POST   /api/import/csv?category=…          (dry-run + commit)
+  GET    /api/export?format=csv|json
+```
+
+**Concurrency rules**
+
+- Stock decrements use a guarded atomic update:
+  `UPDATE items SET qty_on_hand = qty_on_hand - :n, version = version + 1 WHERE sku = :sku AND qty_on_hand - :n >= 0`
+- Reservations check availability inside a transaction (`SERIALIZABLE` on PG; SQLite's single-writer lock covers it).
+- Item edits use optimistic locking via `version` / `If-Match`.
+
+## 5. Barcode & QR Strategy
+
+- **What gets scanned**
+  - Manufacturer barcodes (EAN-13, UPC-A, Code128) → matched against `items.barcode`.
+  - Our own **QR labels** encoding a URL: `https://<host>/i/<SKU>` for items, `/l/<code>` for bins, `/p/<id>` for projects. A URL means a phone's native camera app also opens the right page.
+  - DigiKey/Mouser bag labels (Data Matrix / ECIA 2D format) — stretch goal: parse manufacturer part number and quantity to speed up receiving.
+- **Scanner component** (`<Scanner>`): `getUserMedia` rear camera → `BarcodeDetector` if available, else `zxing-wasm` in a Web Worker; torch toggle; continuous mode for stocktakes; haptic/beep feedback.
+- **Scan flows**
+  1. *Lookup*: scan → item page.
+  2. *Quick adjust*: scan → ± quantity sheet → save movement.
+  3. *Receive*: scan unknown code → "create item" form pre-filled with the barcode.
+  4. *Pick for project*: open project → scan each part → marks reservation consumed.
+  5. *Stocktake*: scan a bin → scan items in it → enter counts → generates `count` movements for differences.
+- Camera access requires **HTTPS** (except localhost) — dev setup uses `vite --host` with mkcert.
+
+## 6. PWA Front End
+
+### 6.1 Screens
+
+| Route | Purpose |
+|---|---|
+| `/` | Dashboard: search box, scan button, low-stock count, active projects |
+| `/search` | Full-text search + faceted filters generated from the category's `filterable` fields |
+| `/items/new`, `/items/[sku]`, `/items/[sku]/edit` | Item detail with movement history, reservations, dynamic form |
+| `/scan` | Full-screen scanner with mode selector (lookup / adjust / receive / stocktake) |
+| `/categories`, `/categories/[id]` | Category tree + **field definition editor** (drag to reorder, type pickers, preview form) |
+| `/locations` | Location tree, print bin labels |
+| `/projects`, `/projects/[id]` | Project list, reservation list (BOM), shortages, consume/release actions |
+| `/reports` | Report picker, filters, preview, CSV/PDF download, print |
+| `/settings` | Backup/export, about |
+| `/i/[sku]`, `/l/[code]`, `/p/[id]` | Short links used by QR labels (redirect) |
+
+### 6.2 Key components
+
+- `DynamicForm` — renders inputs from `field_defs`; `quantity` inputs parse SI prefixes.
+- `QtyInput` — number + unit selector limited to the category's `unit_kind`; emits base-unit integers.
+- `DynamicFilters` — facets from `filterable` fields (enum → checkboxes, number → range).
+- `ItemTable` — columns from `showInList` fields, virtualized for large lists.
+- `Scanner` — see §5.
+- `QtyAdjustSheet` — bottom sheet for ± with reason.
+
+### 6.3 State & data
+
+- Svelte 5 runes + small stores; TanStack Query (`@tanstack/svelte-query`) for fetching, caching, and invalidation.
+- Typed API client generated from the shared Zod schemas.
+
+### 6.4 Offline behaviour (v1)
+
+- App shell precached by Workbox → app opens offline.
+- Item catalogue cached in IndexedDB (stale-while-revalidate) → search and lookup work offline.
+- Quantity adjustments made offline are **queued** (Workbox Background Sync) and replayed when online; the server applies them as deltas (not absolute values) so they merge safely. Conflicts (e.g. would go negative) are surfaced in an "outbox" view.
+- Full offline editing of categories/items is out of scope for v1.
+
+## 7. Security
+
+This is a **single-user** app: there are no accounts, roles or users table.
+
+- **`APP_PASSWORD` unset:** no login. Meant for localhost, a trusted LAN, or behind Tailscale or another VPN.
+- **`APP_PASSWORD` set:** a single password screen. A successful login sets a signed, long-lived session cookie (httpOnly, SameSite=Strict, Secure), so the phone stays logged in. The API refuses to start on a non-localhost bind without `APP_PASSWORD` unless `ALLOW_NO_AUTH=true` is set explicitly.
+- The API and PWA are served from **one origin**, so no CORS is needed and SameSite=Strict blocks CSRF.
+- Login attempts are rate-limited, and the password is compared in constant time.
+- All input is validated with Zod, JSON attributes are validated against the category schema, and queries are always parameterized.
+- `stock_movements` serves as the audit trail.
+
+## 8. Deployment
+
+There is one artifact: a **single Docker image** in which the API serves the built PWA. Migrations run on startup.
+
+### 8.1 Configuration (env)
+
+| Var | Example | Notes |
+|---|---|---|
+| `DATABASE_URL` | `sqlite:///data/inventory.db` or `postgres://inv:…@db:5432/inventory` | Selects the dialect |
+| `APP_PASSWORD` | — | Enables login (§7) |
+| `SESSION_SECRET` | random 32+ bytes | Required when `APP_PASSWORD` is set |
+| `PORT` / `HOST` | `3000` / `0.0.0.0` | |
+| `PUBLIC_URL` | `https://inventory.example.com` | Encoded in QR labels; **choose it before printing labels** |
+| `BACKUP_DIR` | `/data/backups` | Destination for nightly SQLite backups |
+
+### 8.2 Deploy instructions (deliverable: `docs/DEPLOY.md`)
+
+Camera scanning requires **HTTPS** on the phone, so every option below ends with HTTPS. The guide will include copy-paste steps for:
+
+1. **Local dev:** `pnpm dev`, with mkcert for HTTPS so you can test scanning from a phone on the LAN.
+2. **Home server / NAS / Raspberry Pi + SQLite (recommended default):** `docker compose up -d` with a `./data` volume, reached over Tailscale with `tailscale serve`, which gives a real HTTPS cert and keeps the app off the public internet. In this setup, `APP_PASSWORD` is optional.
+3. **LAN without Tailscale:** Caddy in front, using its internal CA, plus steps to install the root cert on iOS and Android.
+4. **Public VPS:** compose with Caddy (automatic Let's Encrypt), with a firewall that allows only 80/443. `APP_PASSWORD` is mandatory here.
+5. **Postgres variant:** a compose override file that adds a `postgres:17` service.
+6. **Operations:**
+   - Backups: SQLite `VACUUM INTO` nightly with retention; `pg_dump` for Postgres.
+   - Restoring from backup.
+   - Upgrading: pull the image and restart; migrations run automatically.
+   - Moving from SQLite to Postgres: `pnpm db:transfer --from sqlite:… --to postgres:…`, which exports JSON and imports it into the new database.
+
+The compose files and Caddyfile examples ship in `docker/`. Updating the guide is part of the definition of done for any change that touches config.
+
+## 9. Milestones
+
+| # | Milestone | Deliverables |
+|---|---|---|
+| **M0** | Project setup | Monorepo, lint/format, CI with SQLite + Postgres matrix, Docker compose, HTTPS dev |
+| **M1** | Data layer | Kysely setup, `DialectAdapter`, migrations for all tables, repositories, seed data (sample categories: Resistors, Capacitors, ICs, Wire, Tools) |
+| **M2** | Categories, dynamic fields & units | Field-def schema, runtime Zod builder, inheritance, `units.ts` (base-unit conversion), category CRUD API + tests |
+| **M3** | Items & stock | Item CRUD, attribute validation, movements ledger, atomic qty updates, search (FTS5 / tsvector) + JSON filters |
+| **M4** | PWA foundation | SvelteKit SPA, optional password login, layout, dashboard, search, item detail/edit with `DynamicForm`, category field editor |
+| **M5** | Scanning | `Scanner` component, lookup/adjust/receive flows, QR label PDF generation |
+| **M6** | Projects & reservations | Project CRUD, reservations with availability checks, pick list, consume/release |
+| **M7** | Reports | Inventory, low-stock, project BOM/shortage, movement history; CSV + PDF + print CSS |
+| **M8** | PWA polish & offline | Manifest, icons, install prompt, offline catalogue, queued adjustments, update toast |
+| **M9** | Import/export, deploy & hardening | CSV import with dry-run, stocktake flow, E2E tests on mobile viewports, Docker image, compose/Caddy examples, backup job, `db:transfer`, `docs/DEPLOY.md` verified end-to-end on a clean machine |
+
+M1–M3 (backend) and M4 (PWA shell against a mock API) can proceed in parallel once the shared schemas from M2 are stable.
+
+## 10. Decisions
+
+| # | Topic | Decision (2026-11-21) | Consequence |
+|---|---|---|---|
+| D1 | Multiple locations per SKU | **No**: one location per SKU | `items.location_id` + `items.qty_on_hand`; no `item_stock` table |
+| D2 | Editable SKUs | **No**: SKUs are immutable | `sku` is the true PK and is referenced directly by FKs; there is no surrogate id, and the API rejects `sku` in PATCH. To "rename" an item, create a new one and transfer the stock |
+| D3 | Fractional quantities | **Whole numbers in a small base unit** | §3.4: mm / mg / µL / pieces, integer columns on both DBs |
+| D4 | Users & hosting | **Single user, with deploy instructions** | §7 optional `APP_PASSWORD`; §8.2 `docs/DEPLOY.md` covering home server/Tailscale, LAN and VPS |
+
+### Remaining minor defaults (go with these unless you say otherwise)
+
+- **SKU generation:** both options. The SKU is auto-suggested from `category.sku_prefix` + a zero-padded sequence (`RES-0001`), and the user can override it at creation.
+- **Cost / valuation:** not in v1. If needed, add a `unit_cost` custom field per category; a fixed column can come later.
+
+## 11. Testing Strategy
+
+- **Unit:** field-def → Zod builder, SI-prefix parser, unit conversion and rounding (property-based), availability math, report aggregations.
+- **Repository/API:** Vitest against real SQLite (in-memory) and Postgres (Testcontainers) — same suite, both dialects.
+- **Concurrency:** parallel decrement / reservation tests to prove no negative stock or over-reservation.
+- **E2E:** Playwright with mobile emulation; scanner tested with injected fake camera streams of barcode images.
+- **PWA:** Lighthouse PWA audit in CI.
