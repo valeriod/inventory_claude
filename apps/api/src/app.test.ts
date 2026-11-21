@@ -27,7 +27,7 @@ describe('api', () => {
 	it('unknown API routes return JSON 404', async () => {
 		const res = await createApp({ conn }).request('/api/nope');
 		expect(res.status).toBe(404);
-		expect(await res.json()).toEqual({ error: 'Not found' });
+		expect(await res.json()).toMatchObject({ error: { code: 'not_found' } });
 	});
 
 	describe('with a static directory', () => {

@@ -56,12 +56,36 @@ export const fieldDefSchema = z.discriminatedUnion('type', [
 	z.object({ ...baseField, type: z.literal('url') })
 ]);
 
+function isValidRegExp(pattern: string): boolean {
+	try {
+		new RegExp(pattern, 'u');
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/** Field definition with cross-property checks (valid regex, min ≤ max). */
+export const checkedFieldDefSchema = fieldDefSchema.superRefine((def, ctx) => {
+	if (def.type === 'text' && def.pattern !== undefined && !isValidRegExp(def.pattern)) {
+		ctx.addIssue({ code: 'custom', path: ['pattern'], message: 'Not a valid regular expression' });
+	}
+	if (
+		def.type === 'number' &&
+		def.min !== undefined &&
+		def.max !== undefined &&
+		def.min > def.max
+	) {
+		ctx.addIssue({ code: 'custom', path: ['min'], message: 'min must not exceed max' });
+	}
+});
+
 export type FieldDef = z.infer<typeof fieldDefSchema>;
 export type FieldDefInput = z.input<typeof fieldDefSchema>;
 export type FieldType = FieldDef['type'];
 
 export const fieldDefsSchema = z
-	.array(fieldDefSchema)
+	.array(checkedFieldDefSchema)
 	.refine((defs) => new Set(defs.map((d) => d.key)).size === defs.length, {
 		message: 'Field keys must be unique within a category'
 	});

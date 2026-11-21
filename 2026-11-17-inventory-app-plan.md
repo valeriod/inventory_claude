@@ -171,6 +171,14 @@ Supported `type` values (v1):
 - **Inheritance:** a child category inherits parent fields (Passives → `package`, `mounting`; Resistors adds `resistance`, `tolerance`).
 - **Schema evolution:** adding a field is free; removing a field hides it (data stays in JSON); renaming a `key` or changing `type` runs a guided migration job that rewrites `attributes` for that category's items.
 
+**Implementation notes (M2):**
+
+- **No shadowing.** A key may be declared only once along any root-to-leaf path. A child cannot redeclare an inherited field, and a parent cannot add a key that a descendant already declares. Sibling branches may reuse keys.
+- **Guarded changes.** Before a field change is saved, existing values are revalidated in the whole subtree. This covers a changed type, options, range, pattern or `required`, a field that is added back over leftover data, and re-parenting that changes which fields are inherited. If any value would become invalid, the change is refused with `409 field_change_conflict` and the offending SKU and key pairs. Label, order, help, unit and list/search flags never trigger revalidation.
+- **Rename.** `POST /api/categories/:id/fields/:key/rename` renames the key and moves the stored values across the subtree, bumping each item's version. Type conversions are not automated: change the item values first, then change the type.
+- **Unknown attribute keys.** The attribute schema rejects keys that no field declares, except keys the item already has. This way, values of removed fields survive later edits. It is wired into item writes in M3.
+- **`fieldDefs` replaces the whole list.** In PATCH, omitting a field removes it (data is kept). The M4 field editor must make removals explicit to the user.
+
 ### 3.3 Example records
 
 ```json
@@ -195,8 +203,8 @@ All quantities (`qty_on_hand`, `qty_min`, `qty_reserved`, `delta`) are stored as
 |---|---|---|
 | `count` | 1 piece | `pcs` (1) |
 | `length` | 1 mm | `mm` (1), `cm` (10), `m` (1000), `in` (25.4 → rounded), `ft` (304.8 → rounded) |
-| `mass` | 1 mg | `mg` (1), `g` (1000), `kg` (1 000 000), `oz` (28 349.5 → rounded) |
-| `volume` | 1 µL | `mL` (1000), `L` (1 000 000) |
+| `mass` | 1 mg | `mg` (1), `g` (1000), `kg` (1 000 000), `oz` (28 349.5 → rounded), `lb` (453 592.37 → rounded) |
+| `volume` | 1 µL | `µL` (1), `mL` (1000), `L` (1 000 000) |
 
 - The table above lives in `packages/shared/units.ts`, along with `toBase(value, unit)` and `fromBase(int, unit)`. The API and the UI both use these functions, and the API only ever receives and returns base-unit integers.
 - Imperial input is converted and rounded to the nearest base unit (0.5 mm or less of error per entry, which is negligible for wire).
@@ -244,17 +252,28 @@ Repositories never write dialect-specific SQL directly. CI runs the full test su
 
 All quantities in requests and responses are integers in base units.
 
+Errors use a single shape: `{ "error": { "code", "message", "details"? } }`.
+
+| Status | Codes |
+|---|---|
+| 400 | `bad_request`, `validation` (details list the failing fields) |
+| 404 | `not_found` |
+| 409 | `conflict`, `field_change_conflict`, `insufficient_stock` |
+| 422 | `invalid_operation` |
+
 ```
 Auth (only active when APP_PASSWORD is set, see §7)
   POST   /api/auth/login             { password } → session cookie (httpOnly)
   POST   /api/auth/logout
 
 Categories
-  GET    /api/categories             (tree, with resolved/inherited field_defs)
+  GET    /api/categories             (flat list; each with own fieldDefs + resolvedFieldDefs)
   POST   /api/categories
   GET    /api/categories/:id
-  PATCH  /api/categories/:id         (field_defs changes validated for compatibility)
-  DELETE /api/categories/:id         (only if empty)
+  PATCH  /api/categories/:id         (fieldDefs changes revalidate existing values → 409 with violations)
+  DELETE /api/categories/:id         (only if no items or sub-categories)
+  POST   /api/categories/:id/fields/:key/rename   { newKey }
+  GET    /api/units                  (unit table per unit kind)
 
 Items
   GET    /api/items?q=&category=&location=&lowStock=&attr.color=red&attr.gauge_awg[gte]=18
@@ -399,7 +418,7 @@ The compose files and Caddyfile examples ship in `docker/`. Updating the guide i
 |---|---|---|
 | **M0** ✅ | Project setup | Monorepo, lint/format, CI with SQLite + Postgres matrix, Docker compose, HTTPS dev |
 | **M1** ✅ | Data layer | Kysely setup, `DialectAdapter`, migrations for all tables, repositories (including the transactional stock-movement and reservation logic), seed data (`pnpm db:seed`: sample categories Resistors, Capacitors, ICs, Wire, Tools) |
-| **M2** | Categories, dynamic fields & units | Field-def schema, runtime Zod builder, inheritance, `units.ts` (base-unit conversion), category CRUD API + tests |
+| **M2** ✅ | Categories, dynamic fields & units | Field-def schema, runtime Zod builder, inheritance, `units.ts` (base-unit conversion), category CRUD API + tests |
 | **M3** | Items & stock | Item and stock HTTP API on top of the M1 repositories, attribute validation against resolved field definitions, `searchable` flag, search and JSON-filter query parameters |
 | **M4** | PWA foundation | SvelteKit SPA, optional password login, layout, dashboard, search, item detail/edit with `DynamicForm`, category field editor |
 | **M5** | Scanning | `Scanner` component, lookup/adjust/receive flows, QR label PDF generation |

@@ -2,8 +2,10 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
-import type { DatabaseConnection } from '@inventory/db';
-import type { HealthResponse } from '@inventory/shared';
+import { createRepositories, type DatabaseConnection } from '@inventory/db';
+import { UNITS, type HealthResponse } from '@inventory/shared';
+import { handleError, notFound } from './http/errors.ts';
+import { categoryRoutes } from './routes/categories.ts';
 import { VERSION } from './version.ts';
 
 export interface AppOptions {
@@ -13,14 +15,18 @@ export interface AppOptions {
 }
 
 export function createApp({ conn, staticDir }: AppOptions): Hono {
+	const repos = createRepositories(conn);
 	const app = new Hono();
 	const api = new Hono();
 
 	api.get('/health', (c) =>
 		c.json({ status: 'ok', version: VERSION, database: conn.dialect } satisfies HealthResponse)
 	);
+	api.get('/units', (c) => c.json(UNITS));
+	api.route('/categories', categoryRoutes(repos));
 
-	api.all('*', (c) => c.json({ error: 'Not found' }, 404));
+	api.all('*', notFound);
+	api.onError(handleError);
 
 	app.route('/api', api);
 
@@ -34,10 +40,6 @@ export function createApp({ conn, staticDir }: AppOptions): Hono {
 		app.get('*', serveStatic({ path: fallback, precompressed: true }));
 	}
 
-	app.onError((err, c) => {
-		console.error(err);
-		return c.json({ error: 'Internal server error' }, 500);
-	});
-
+	app.onError(handleError);
 	return app;
 }
