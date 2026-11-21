@@ -1,0 +1,40 @@
+import type { Attributes } from '@inventory/shared';
+
+const MAX_QUERY_TOKENS = 10;
+
+/**
+ * Normalize text into search tokens: lower-case, diacritics removed, split on anything that is
+ * not a letter or digit. The same function builds `items.search_text` and tokenizes queries, so
+ * SQLite FTS5 and Postgres tsvector both index plain space-separated alphanumeric tokens and
+ * behave the same way.
+ */
+export function tokenize(text: string): string[] {
+	return (
+		text
+			.normalize('NFKD')
+			.replace(/\p{M}/gu, '')
+			.toLowerCase()
+			.match(/[\p{L}\p{N}]+/gu) ?? []
+	);
+}
+
+export function queryTokens(query: string): string[] {
+	return [...new Set(tokenize(query))].slice(0, MAX_QUERY_TOKENS);
+}
+
+export interface SearchableItem {
+	sku: string;
+	name: string;
+	description: string | null;
+	barcode: string | null;
+	attributes: Attributes;
+}
+
+export function buildSearchText(item: SearchableItem): string {
+	const parts: string[] = [item.sku, item.name, item.description ?? '', item.barcode ?? ''];
+	for (const value of Object.values(item.attributes)) {
+		if (value === null || typeof value === 'boolean') continue;
+		parts.push(Array.isArray(value) ? value.join(' ') : String(value));
+	}
+	return [...new Set(tokenize(parts.join(' ')))].join(' ');
+}

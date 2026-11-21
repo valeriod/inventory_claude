@@ -212,20 +212,33 @@ All quantities (`qty_on_hand`, `qty_min`, `qty_reserved`, `delta`) are stored as
 | Read a field | `json_extract(attributes, '$.gauge_awg')` | `attributes->>'gauge_awg'` |
 | Containment filter | `json_extract(...) = ?` | `attributes @> '{"color":"red"}'` (GIN index) |
 | Indexing | Expression index per hot field, created on demand | GIN on `attributes` + optional expression indexes |
-| Full-text search | FTS5 virtual table on `search_text` | `tsvector` generated column + GIN, `pg_trgm` for fuzzy |
+| Full-text search | FTS5 table keyed by SKU, synced by triggers | `tsvector` generated column (`simple` config) + GIN |
 
 All dialect differences live behind a small **`DialectAdapter`** interface in `packages/db`:
 
 ```ts
 interface DialectAdapter {
+  supportsRowLocks: boolean;                       // SELECT … FOR UPDATE (PG) vs serialized writers (SQLite)
+  json(value: unknown): RawBuilder<unknown>;       // bind a JSON column value
+  parseJson<T>(raw: unknown): T;                   // TEXT on SQLite, parsed jsonb on PG
   jsonField(column: string, key: string, cast?: 'text' | 'number' | 'boolean'): RawBuilder<unknown>;
-  jsonEquals(column: string, key: string, value: unknown): RawBuilder<boolean>;
-  fullTextMatch(query: string): RawBuilder<boolean>;
-  ensureFieldIndex(categoryId: number, key: string): Promise<void>;
+  jsonEquals(column: string, key: string, value: string | number | boolean): RawBuilder<SqlBool>;
+  jsonArrayContains(column: string, key: string, value: string): RawBuilder<SqlBool>; // multi_enum
+  itemTextMatch(query: string): RawBuilder<SqlBool> | null;
+  ensureFieldIndex(db, key: string, cast?: JsonCast): Promise<void>;
+  constraintViolation(err: unknown): 'unique' | 'foreign_key' | 'check' | null;
 }
 ```
 
 Repositories never write dialect-specific SQL directly. CI runs the full test suite against both databases.
+
+**Implementation notes (M1):**
+
+- **Search tokens.** `items.search_text` stores normalized tokens: lower-case, diacritics stripped, split on anything that isn't a letter or digit. Queries are tokenized the same way and matched as prefixes (`res 00` finds `RES-0001`). This gives identical results on FTS5 and tsvector. Fuzzy matching with `pg_trgm` is deferred, because it needs an extension that not every Postgres host allows.
+- **SQLite FTS table.** It is a standalone FTS5 table keyed by SKU, not an external-content table keyed by rowid. Items have a TEXT primary key, so `VACUUM` may renumber rowids.
+- **Timestamps.** They are ISO-8601 strings on both databases: TEXT on SQLite, and `timestamptz` on PG, parsed back to ISO by the driver.
+- **Attribute keys** are restricted to `^[a-z][a-z0-9_]{0,62}$`, because they are inlined in JSON paths and index names. The adapter re-checks every key.
+- **`searchable: false`.** Fields marked this way are still indexed for search in M1. Honouring the flag needs resolved (inherited) field definitions, so it is done in M3.
 
 ## 4. API Design (REST, JSON)
 
@@ -385,9 +398,9 @@ The compose files and Caddyfile examples ship in `docker/`. Updating the guide i
 | # | Milestone | Deliverables |
 |---|---|---|
 | **M0** ✅ | Project setup | Monorepo, lint/format, CI with SQLite + Postgres matrix, Docker compose, HTTPS dev |
-| **M1** | Data layer | Kysely setup, `DialectAdapter`, migrations for all tables, repositories, seed data (sample categories: Resistors, Capacitors, ICs, Wire, Tools) |
+| **M1** ✅ | Data layer | Kysely setup, `DialectAdapter`, migrations for all tables, repositories (including the transactional stock-movement and reservation logic), seed data (`pnpm db:seed`: sample categories Resistors, Capacitors, ICs, Wire, Tools) |
 | **M2** | Categories, dynamic fields & units | Field-def schema, runtime Zod builder, inheritance, `units.ts` (base-unit conversion), category CRUD API + tests |
-| **M3** | Items & stock | Item CRUD, attribute validation, movements ledger, atomic qty updates, search (FTS5 / tsvector) + JSON filters |
+| **M3** | Items & stock | Item and stock HTTP API on top of the M1 repositories, attribute validation against resolved field definitions, `searchable` flag, search and JSON-filter query parameters |
 | **M4** | PWA foundation | SvelteKit SPA, optional password login, layout, dashboard, search, item detail/edit with `DynamicForm`, category field editor |
 | **M5** | Scanning | `Scanner` component, lookup/adjust/receive flows, QR label PDF generation |
 | **M6** | Projects & reservations | Project CRUD, reservations with availability checks, pick list, consume/release |

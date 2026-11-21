@@ -1,52 +1,79 @@
 import { sql } from 'kysely';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { connect, type DatabaseConnection } from './connect.ts';
-import { migrateToLatest } from './migrate.ts';
+import { describe, expect, it } from 'vitest';
+import { migrateToEmpty, migrateToLatest } from './migrate.ts';
+import type { TestDatabase } from './testing.ts';
+import { useTestDatabase } from './test-helpers.ts';
 
-// Runs against SQLite in memory by default; CI also runs it with TEST_DATABASE_URL=postgres://…
-const url = process.env.TEST_DATABASE_URL ?? 'sqlite::memory:';
+const CORE_TABLES = [
+	'categories',
+	'locations',
+	'projects',
+	'items',
+	'reservations',
+	'stock_movements'
+];
 
-describe(`database connection (${url.split(':')[0]})`, () => {
-	let conn: DatabaseConnection;
+async function tableExists(conn: TestDatabase, name: string): Promise<boolean> {
+	const query =
+		conn.dialect === 'sqlite'
+			? sql<{
+					found: number;
+				}>`select count(*) as found from sqlite_master where type = 'table' and name = ${name}`
+			: sql<{
+					found: number;
+				}>`select count(*) as found from pg_tables where schemaname = current_schema() and tablename = ${name}`;
+	const { rows } = await query.execute(conn.db);
+	return Number(rows[0]?.found) > 0;
+}
 
-	beforeAll(() => {
-		conn = connect(url);
-	});
-
-	afterAll(async () => {
-		await conn?.close();
-	});
-
-	it('reports the expected dialect', () => {
-		expect(conn.dialect).toBe(url.startsWith('sqlite') ? 'sqlite' : 'postgres');
-	});
+describe('database connection and migrations', () => {
+	const fx = useTestDatabase();
 
 	it('executes a query', async () => {
-		const { rows } = await sql<{ one: number }>`select 1 as one`.execute(conn.db);
+		const { rows } = await sql<{ one: number }>`select 1 as one`.execute(fx().db.db);
 		expect(Number(rows[0]?.one)).toBe(1);
 	});
 
-	it('supports JSON field extraction', async () => {
-		const doc = JSON.stringify({ color: 'red', gauge_awg: 22 });
-		const query =
-			conn.dialect === 'sqlite'
-				? sql<{ color: string }>`select json_extract(${doc}, '$.color') as color`
-				: sql<{ color: string }>`select (${doc}::jsonb)->>'color' as color`;
-		const { rows } = await query.execute(conn.db);
-		expect(rows[0]?.color).toBe('red');
-	});
-
 	it('round-trips 64-bit integers as numbers', async () => {
-		const big = 9_000_000_000_000; // 9 billion metres in mm
+		const big = 9_000_000_000_000;
+		const { db, dialect } = fx().db;
 		const query =
-			conn.dialect === 'sqlite'
+			dialect === 'sqlite'
 				? sql<{ n: number }>`select cast(${big} as integer) as n`
 				: sql<{ n: number }>`select ${big}::bigint as n`;
-		const { rows } = await query.execute(conn.db);
+		const { rows } = await query.execute(db);
 		expect(rows[0]?.n).toBe(big);
 	});
 
-	it('runs migrations', async () => {
-		await expect(migrateToLatest(conn)).resolves.toBeInstanceOf(Array);
+	it('creates all core tables', async () => {
+		for (const table of CORE_TABLES) expect(await tableExists(fx().db, table)).toBe(true);
+	});
+
+	it('is idempotent and reversible', async () => {
+		const conn = fx().db;
+		expect(await migrateToLatest(conn)).toEqual([]);
+		const down = await migrateToEmpty(conn);
+		expect(down.every((r) => r.status === 'Success')).toBe(true);
+		for (const table of CORE_TABLES) expect(await tableExists(conn, table)).toBe(false);
+		expect(await migrateToLatest(conn)).toHaveLength(1);
+	});
+
+	it('enforces foreign keys', async () => {
+		const { db, adapter } = fx().db;
+		const now = new Date().toISOString();
+		const err = await db
+			.insertInto('items')
+			.values({
+				sku: 'X-1',
+				category_id: 999,
+				name: 'Orphan',
+				attributes: adapter.json({}),
+				search_text: '',
+				created_at: now,
+				updated_at: now
+			})
+			.execute()
+			.catch((e: unknown) => e);
+		expect(adapter.constraintViolation(err)).toBe('foreign_key');
 	});
 });

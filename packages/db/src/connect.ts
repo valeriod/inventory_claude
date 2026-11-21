@@ -4,22 +4,32 @@ import SQLite from 'better-sqlite3';
 import { Kysely, PostgresDialect, SqliteDialect } from 'kysely';
 import pg from 'pg';
 import type { DatabaseDialect } from '@inventory/shared';
+import { adapterFor, type DialectAdapter } from './dialect.ts';
 import type { Database } from './schema.ts';
 import { parseDatabaseUrl } from './url.ts';
 
 export interface DatabaseConnection {
 	db: Kysely<Database>;
 	dialect: DatabaseDialect;
+	adapter: DialectAdapter;
 	close: () => Promise<void>;
 }
 
-// Postgres returns BIGINT (int8, OID 20) as strings by default. All quantities are
-// BIGINT base units (plan §3.4) and stay well within the safe integer range.
+// Postgres returns BIGINT (int8) as strings by default. All quantities are BIGINT base units
+// (plan §3.4) and stay well within the safe integer range.
 const INT8_OID = 20;
 pg.types.setTypeParser(INT8_OID, (value) => {
 	const n = Number(value);
 	if (!Number.isSafeInteger(n)) throw new RangeError(`int8 value ${value} exceeds safe integer`);
 	return n;
+});
+
+// timestamptz → ISO-8601 string, matching how timestamps are stored on SQLite.
+const TIMESTAMPTZ_OID = 1184;
+const parseTimestamptz = pg.types.getTypeParser(TIMESTAMPTZ_OID);
+pg.types.setTypeParser(TIMESTAMPTZ_OID, (value) => {
+	const parsed: unknown = parseTimestamptz(value);
+	return parsed instanceof Date ? parsed.toISOString() : parsed;
 });
 
 export function connect(databaseUrl: string): DatabaseConnection {
@@ -34,10 +44,10 @@ export function connect(databaseUrl: string): DatabaseConnection {
 		sqlite.pragma('foreign_keys = ON');
 		sqlite.pragma('busy_timeout = 5000');
 		const db = new Kysely<Database>({ dialect: new SqliteDialect({ database: sqlite }) });
-		return { db, dialect: 'sqlite', close: () => db.destroy() };
+		return { db, dialect: 'sqlite', adapter: adapterFor('sqlite'), close: () => db.destroy() };
 	}
 
 	const pool = new pg.Pool({ connectionString: target.connectionString, max: 10 });
 	const db = new Kysely<Database>({ dialect: new PostgresDialect({ pool }) });
-	return { db, dialect: 'postgres', close: () => db.destroy() };
+	return { db, dialect: 'postgres', adapter: adapterFor('postgres'), close: () => db.destroy() };
 }
