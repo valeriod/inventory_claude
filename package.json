@@ -1,0 +1,32 @@
+{
+	"name": "inventory",
+	"private": true,
+	"type": "module",
+	"packageManager": "pnpm@12.21.0",
+	"engines": {
+		"node": ">=24"
+	},
+	"scripts": {
+		"dev": "pnpm --parallel --filter api --filter web dev",
+		"dev:https": "DEV_HTTPS=1 pnpm dev",
+		"build": "pnpm --filter web build && pnpm --filter api build",
+		"start": "pnpm --filter api start",
+		"lint": "eslint . && prettier --check .",
+		"format": "prettier --write .",
+		"typecheck": "pnpm -r typecheck",
+		"test": "pnpm -r test",
+		"test:pg": "TEST_DATABASE_URL=${TEST_DATABASE_URL:-postgres://inventory:inventory@localhost:5432/inventory_test} pnpm -r test",
+		"db:migrate": "pnpm --filter api db:migrate"
+	},
+	"devDependencies": {
+		"@eslint/js": "^10.0.1",
+		"eslint": "^10.15.0",
+		"eslint-config-prettier": "^10.1.8",
+		"eslint-plugin-svelte": "^3.24.1",
+		"globals": "^17.14.0",
+		"prettier": "^3.10.1",
+		"prettier-plugin-svelte": "^4.2.0",
+		"typescript": "~6.0.3",
+		"typescript-eslint": "^8.73.0"
+	}
+}

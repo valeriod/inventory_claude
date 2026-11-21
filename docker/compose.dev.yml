@@ -1,0 +1,18 @@
+# Local Postgres for development and `pnpm test:pg`:
+#   docker compose -f docker/compose.dev.yml up -d
+name: inventory-dev
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: inventory
+      POSTGRES_PASSWORD: inventory
+      POSTGRES_DB: inventory_test
+    ports:
+      - '127.0.0.1:5432:5432'
+    volumes:
+      - pgdev:/var/lib/postgresql
+
+volumes:
+  pgdev:
