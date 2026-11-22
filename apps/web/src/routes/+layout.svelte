@@ -14,8 +14,15 @@
 		{ href: resolve('/items'), label: 'Items', match: (p: string) => p.startsWith('/items') },
 		{ href: resolve('/scan'), label: 'Scan', match: (p: string) => p.startsWith('/scan') },
 		{
+			href: resolve('/projects'),
+			label: 'Projects',
+			match: (p: string) => p.startsWith('/projects')
+		},
+		{
 			href: resolve('/categories'),
 			label: 'Categories',
+			// Not in the phone bar (six items do not fit); reachable from the dashboard.
+			mobile: false,
 			match: (p: string) => p.startsWith('/categories')
 		},
 		{
@@ -74,7 +81,7 @@
 			class="fixed inset-x-0 bottom-0 z-10 grid grid-cols-5 border-t border-slate-200 bg-white sm:hidden"
 			aria-label="Main"
 		>
-			{#each nav as item (item.href)}
+			{#each nav.filter((n) => n.mobile !== false) as item (item.href)}
 				<a
 					href={item.href}
 					class="py-3 text-center text-xs font-medium"

@@ -1,10 +1,11 @@
 <script lang="ts">
-	import type { CategoryWithFields, ItemWithAvailability } from '@inventory/shared';
-	import { goto } from '$app/navigation';
+	import type { CategoryWithFields, ItemWithAvailability, PickLine } from '@inventory/shared';
+	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { api, ApiError, type StockChangeResponse } from '#lib/api.js';
 	import ErrorAlert from '#lib/components/ErrorAlert.svelte';
+	import ReservationDialog from '#lib/components/ReservationDialog.svelte';
 	import Scanner from '#lib/components/Scanner.svelte';
 	import StockDialog, { type StockMode } from '#lib/components/StockDialog.svelte';
 	import { formatQty } from '#lib/format.js';
@@ -17,11 +18,15 @@
 		{ id: 'adjust', label: 'Adjust', hint: 'Scan an item, then add or remove stock.' },
 		{ id: 'receive', label: 'Receive', hint: 'Scan to add stock; unknown barcodes create an item.' }
 	] as const;
-	type Mode = (typeof MODES)[number]['id'];
+	type Mode = (typeof MODES)[number]['id'] | 'pick';
 
+	/** Pick mode needs a project (opened from a project page). */
 	const mode = $derived<Mode>(
-		MODES.find((m) => m.id === page.url.searchParams.get('mode'))?.id ?? 'lookup'
+		data.project
+			? 'pick'
+			: (MODES.find((m) => m.id === page.url.searchParams.get('mode'))?.id ?? 'lookup')
 	);
+	const toPick = $derived(data.lines?.filter((l) => l.status === 'reserved') ?? []);
 
 	type Message =
 		| { kind: 'info'; text: string }
@@ -37,16 +42,18 @@
 		mode: StockMode;
 	} | null>(null);
 	let stockOpen = $state(false);
+	let pickLine = $state<{ line: PickLine; category: CategoryWithFields } | null>(null);
+	let pickOpen = $state(false);
 	let recent = $state<{ id: number; sku: string; name: string; text: string }[]>([]);
 	let nextId = 0;
 
-	const paused = $derived(busy || stockOpen);
+	const paused = $derived(busy || stockOpen || pickOpen);
 
 	/** Our own label URLs (…/i/SKU, …/l/CODE) as opposed to manufacturer barcodes. */
 	const isLabelUrl = (code: string) => /^https?:\/\//i.test(code) || code.startsWith('/');
 
 	async function handle(code: string) {
-		if (busy || stockOpen) return;
+		if (busy || stockOpen || pickOpen) return;
 		busy = true;
 		message = null;
 		try {
@@ -59,6 +66,19 @@
 				}
 				const category = data.categories.find((c) => c.id === item.categoryId);
 				if (!category) throw new Error(`Category of ${item.sku} not found; reload the page`);
+				if (mode === 'pick') {
+					const line = toPick.find((l) => l.sku === item.sku);
+					if (line) {
+						pickLine = { line, category };
+						pickOpen = true;
+					} else {
+						message = {
+							kind: 'info',
+							text: `${item.sku} (${item.name}) is not reserved for this project.`
+						};
+					}
+					return;
+				}
 				stock = { item, category, mode: mode === 'receive' ? 'receive' : 'adjust' };
 				stockOpen = true;
 			} else if (result.type === 'location') {
@@ -71,10 +91,13 @@
 					kind: 'info',
 					text: `That is the label of bin ${location.code} (${location.name}). Scan an item instead.`
 				};
+			} else if (mode === 'lookup') {
+				await goto(resolve('/projects/[id]', { id: String(result.project.id) }));
+				return;
 			} else {
 				message = {
 					kind: 'info',
-					text: `That is the label of project “${result.project.name}”. Project pages are not available yet.`
+					text: `That is the label of project “${result.project.name}”. Scan an item instead.`
 				};
 			}
 		} catch (err) {
@@ -111,6 +134,21 @@
 		].slice(0, 10);
 	}
 
+	async function pickDone(picked: number) {
+		if (!pickLine) return;
+		const { line, category } = pickLine;
+		recent = [
+			{
+				id: nextId++,
+				sku: line.sku,
+				name: line.item.name,
+				text: `picked ${formatQty(picked, category)}`
+			},
+			...recent
+		].slice(0, 10);
+		await invalidateAll();
+	}
+
 	function submitManual(e: SubmitEvent) {
 		e.preventDefault();
 		const code = manual.trim();
@@ -122,21 +160,30 @@
 
 <h1 class="mb-4 text-2xl font-bold">Scan</h1>
 
-<nav class="mb-3 grid grid-cols-3 gap-1 rounded-lg bg-slate-200 p-1" aria-label="Scan mode">
-	{#each MODES as m (m.id)}
-		<a
-			href={resolve(`/scan?mode=${m.id}`)}
-			data-sveltekit-replacestate
-			class="rounded-md py-1.5 text-center text-sm font-medium"
-			class:bg-white={mode === m.id}
-			class:shadow-sm={mode === m.id}
-			aria-current={mode === m.id ? 'page' : undefined}
-		>
-			{m.label}
+{#if data.project}
+	<div class="mb-3 flex items-center gap-2 rounded-lg bg-blue-50 p-3 text-sm text-blue-900">
+		<span>Picking parts for <strong>{data.project.name}</strong>: scan each part you take.</span>
+		<a class="btn btn-sm ml-auto" href={resolve('/projects/[id]', { id: String(data.project.id) })}>
+			Done
 		</a>
-	{/each}
-</nav>
-<p class="mb-3 text-sm text-slate-600">{MODES.find((m) => m.id === mode)?.hint}</p>
+	</div>
+{:else}
+	<nav class="mb-3 grid grid-cols-3 gap-1 rounded-lg bg-slate-200 p-1" aria-label="Scan mode">
+		{#each MODES as m (m.id)}
+			<a
+				href={resolve(`/scan?mode=${m.id}`)}
+				data-sveltekit-replacestate
+				class="rounded-md py-1.5 text-center text-sm font-medium"
+				class:bg-white={mode === m.id}
+				class:shadow-sm={mode === m.id}
+				aria-current={mode === m.id ? 'page' : undefined}
+			>
+				{m.label}
+			</a>
+		{/each}
+	</nav>
+	<p class="mb-3 text-sm text-slate-600">{MODES.find((m) => m.id === mode)?.hint}</p>
+{/if}
 
 <Scanner onscan={(d) => handle(d.text)} {paused} />
 
@@ -176,6 +223,26 @@
 		<ErrorAlert error={message.error} />
 	{/if}
 
+	{#if data.project}
+		<section class="card">
+			<h2 class="mb-2 text-sm font-semibold">Still to pick</h2>
+			{#if toPick.length === 0}
+				<p class="text-sm text-slate-500">Everything reserved has been picked.</p>
+			{:else}
+				<ul class="divide-y divide-slate-100 text-sm" data-testid="to-pick">
+					{#each toPick as l (l.id)}
+						{@const cat = data.categories.find((c) => c.id === l.item.categoryId)}
+						<li class="flex items-baseline gap-2 py-1.5">
+							<span class="font-mono">{l.sku}</span>
+							<span class="truncate text-slate-600">{l.item.name}</span>
+							<span class="ml-auto whitespace-nowrap">{formatQty(l.qtyReserved, cat)}</span>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>
+	{/if}
+
 	{#if recent.length > 0}
 		<section class="card">
 			<h2 class="mb-2 text-sm font-semibold">This session</h2>
@@ -199,5 +266,15 @@
 		item={stock.item}
 		category={stock.category}
 		ondone={stockDone}
+	/>
+{/if}
+
+{#if pickLine}
+	<ReservationDialog
+		bind:open={pickOpen}
+		action="pick"
+		reservation={pickLine.line}
+		category={pickLine.category}
+		ondone={pickDone}
 	/>
 {/if}

@@ -78,7 +78,7 @@ describe('ReservationRepository', () => {
 	it('consumes a reservation into a stock movement', async () => {
 		const { repos, sku, project } = await setup();
 		const r = await repos.reservations.reserve({ projectId: project.id, sku, qty: 4 });
-		const consumed = await repos.reservations.consume(r.id, 'built');
+		const consumed = await repos.reservations.consume(r.id, { note: 'built' });
 		expect(consumed.status).toBe('consumed');
 		expect(await repos.reservations.availability(sku)).toEqual({
 			qtyOnHand: 6,
@@ -128,5 +128,94 @@ describe('ReservationRepository', () => {
 		expect(await repos.reservations.listBySku(sku)).toEqual([]);
 		const [movement] = await repos.stock.movements({ sku, reasons: ['reserve_consume'] });
 		expect(movement).toMatchObject({ delta: -2, projectId: null, reservationId: null });
+	});
+
+	it('consumes part of a reservation and keeps the rest reserved', async () => {
+		const { repos, sku, project } = await setup();
+		const r = await repos.reservations.reserve({ projectId: project.id, sku, qty: 5 });
+		const partial = await repos.reservations.consume(r.id, { qty: 2 });
+		expect(partial).toMatchObject({ status: 'reserved', qtyReserved: 3 });
+		expect(await repos.reservations.availability(sku)).toEqual({
+			qtyOnHand: 8,
+			qtyReserved: 3,
+			qtyAvailable: 5
+		});
+		await expect(repos.reservations.consume(r.id, { qty: 4 })).rejects.toBeInstanceOf(
+			InvalidOperationError
+		);
+		expect((await repos.reservations.consume(r.id, { qty: 3 })).status).toBe('consumed');
+		const movements = await repos.stock.movements({ sku, reasons: ['reserve_consume'] });
+		expect(movements.map((m) => m.delta).sort()).toEqual([-2, -3]);
+		expect(movements.every((m) => m.reservationId === r.id && m.projectId === project.id)).toBe(
+			true
+		);
+	});
+
+	it('consumes all open lines of a project, or none if one is short', async () => {
+		const { repos, sku, project } = await setup(10);
+		const cat = await createCountCategory(repos, 'Other', 'OTH-');
+		const b = await repos.items.create({ categoryId: cat.id, name: 'B', qtyOnHand: 3 });
+		await repos.reservations.reserve({ projectId: project.id, sku, qty: 4 });
+		await repos.reservations.reserve({ projectId: project.id, sku: b.sku, qty: 3 });
+		await repos.stock.adjust({ sku: b.sku, delta: -1, reason: 'consume' });
+
+		await expect(repos.reservations.consumeAll(project.id)).rejects.toBeInstanceOf(
+			InsufficientStockError
+		);
+		expect((await repos.items.get(sku)).qtyOnHand).toBe(10);
+
+		await repos.stock.adjust({ sku: b.sku, delta: 1, reason: 'receive' });
+		const consumed = await repos.reservations.consumeAll(project.id, 'built');
+		expect(consumed.map((r) => r.status)).toEqual(['consumed', 'consumed']);
+		expect((await repos.items.get(sku)).qtyOnHand).toBe(6);
+		expect((await repos.items.get(b.sku)).qtyOnHand).toBe(0);
+	});
+
+	it('releases all open lines of a project', async () => {
+		const { repos, sku, project } = await setup();
+		await repos.reservations.reserve({ projectId: project.id, sku, qty: 4 });
+		expect(await repos.reservations.releaseAll(project.id)).toBe(1);
+		expect(await repos.reservations.releaseAll(project.id)).toBe(0);
+		expect((await repos.items.get(sku)).qtyAvailable).toBe(10);
+	});
+
+	it('builds a pick list with stock and shortages', async () => {
+		const { repos, sku, project, other } = await setup(10);
+		const r1 = await repos.reservations.reserve({ projectId: project.id, sku, qty: 6 });
+		await repos.reservations.reserve({ projectId: other.id, sku, qty: 4 });
+		await repos.stock.adjust({ sku, delta: -5, reason: 'consume' });
+
+		const lines = await repos.reservations.pickList(project.id);
+		expect(lines).toHaveLength(1);
+		expect(lines[0]).toMatchObject({
+			id: r1.id,
+			status: 'reserved',
+			item: { name: 'Part', qtyOnHand: 5, qtyAvailable: -5 },
+			shortBy: 1
+		});
+
+		const summary = await repos.projects.getWithSummary(project.id);
+		expect(summary).toMatchObject({ openLines: 1, shortLines: 1, consumedLines: 0 });
+		const list = await repos.projects.listWithSummary();
+		expect(list.find((p) => p.id === other.id)).toMatchObject({ openLines: 1, shortLines: 0 });
+	});
+
+	it('lists reservations of an item with their project', async () => {
+		const { repos, sku, project } = await setup();
+		await repos.reservations.reserve({ projectId: project.id, sku, qty: 1 });
+		const [r] = await repos.reservations.listBySkuWithProject(sku);
+		expect(r).toMatchObject({ project: { id: project.id, name: 'Amp', status: 'active' } });
+	});
+
+	it('only completes or cancels projects without open reservations', async () => {
+		const { repos, sku, project } = await setup();
+		const r = await repos.reservations.reserve({ projectId: project.id, sku, qty: 1 });
+		await expect(repos.projects.update(project.id, { status: 'completed' })).rejects.toThrow(
+			/1 open reservation/
+		);
+		await repos.reservations.consume(r.id);
+		expect((await repos.projects.update(project.id, { status: 'completed' })).status).toBe(
+			'completed'
+		);
 	});
 });

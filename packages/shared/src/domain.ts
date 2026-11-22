@@ -81,3 +81,31 @@ export interface StockMovement {
 	note: string | null;
 	createdAt: IsoTimestamp;
 }
+
+/** Project with counts of its reservation lines. */
+export interface ProjectSummary extends Project {
+	/** Open (status = reserved) lines. */
+	openLines: number;
+	/** Open lines that cannot be picked in full from current stock (on hand < reserved). */
+	shortLines: number;
+	consumedLines: number;
+}
+
+/** A reservation line of a project with the item data a pick list needs. */
+export interface PickLine extends Reservation {
+	item: {
+		name: string;
+		categoryId: number;
+		locationId: number | null;
+		qtyOnHand: number;
+		qtyAvailable: number;
+		archivedAt: IsoTimestamp | null;
+	};
+	/** Part of an open reservation that cannot be taken from stock now: max(0, reserved − on hand). */
+	shortBy: number;
+}
+
+/** Reservation with the project it belongs to (item page). */
+export interface ReservationWithProject extends Reservation {
+	project: Pick<Project, 'id' | 'name' | 'status'>;
+}

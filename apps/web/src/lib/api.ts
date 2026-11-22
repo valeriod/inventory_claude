@@ -10,7 +10,14 @@ import type {
 	ItemWithAvailability,
 	Location,
 	LookupResult,
+	PickLine,
+	ProjectSummary,
 	Reservation,
+	ReservationWithProject,
+	ReserveRequest,
+	CreateProjectRequest,
+	UpdateProjectRequest,
+	UpdateReservationRequest,
 	StockCountRequest,
 	StockMovement,
 	StockMovementRequest,
@@ -141,7 +148,7 @@ export const api = {
 		count: (sku: string, body: StockCountRequest) =>
 			request<StockChangeResponse>(`/items/${enc(sku)}/count`, { method: 'POST', body }),
 		reservations: (sku: string, f?: Fetch) =>
-			request<Reservation[]>(`/items/${enc(sku)}/reservations`, { fetch: f })
+			request<ReservationWithProject[]>(`/items/${enc(sku)}/reservations`, { fetch: f })
 	},
 
 	locations: {
@@ -153,6 +160,37 @@ export const api = {
 		remove: (id: number) => request<void>(`/locations/${id}`, { method: 'DELETE' })
 	},
 
+	projects: {
+		/** `status` filters, e.g. ['planning', 'active']; empty for all. */
+		list: (status: string[] = [], f?: Fetch) =>
+			request<ProjectSummary[]>(
+				status.length ? `/projects?status=${status.join(',')}` : '/projects',
+				{ fetch: f }
+			),
+		get: (id: number, f?: Fetch) => request<ProjectSummary>(`/projects/${id}`, { fetch: f }),
+		create: (body: CreateProjectRequest) =>
+			request<ProjectSummary>('/projects', { method: 'POST', body }),
+		update: (id: number, body: UpdateProjectRequest) =>
+			request<ProjectSummary>(`/projects/${id}`, { method: 'PATCH', body }),
+		remove: (id: number) => request<void>(`/projects/${id}`, { method: 'DELETE' }),
+		lines: (id: number, f?: Fetch) =>
+			request<PickLine[]>(`/projects/${id}/reservations`, { fetch: f }),
+		reserve: (id: number, body: ReserveRequest) =>
+			request<Reservation>(`/projects/${id}/reservations`, { method: 'POST', body }),
+		consumeAll: (id: number, note?: string | null) =>
+			request<{ consumed: number }>(`/projects/${id}/consume-all`, {
+				method: 'POST',
+				body: { note: note ?? null }
+			}),
+		releaseAll: (id: number) =>
+			request<{ released: number }>(`/projects/${id}/release-all`, { method: 'POST' })
+	},
+
+	reservations: {
+		update: (id: number, body: UpdateReservationRequest) =>
+			request<Reservation>(`/reservations/${id}`, { method: 'PATCH', body })
+	},
+
 	lookup: (code: string, f?: Fetch) =>
 		request<LookupResult>(`/lookup?code=${enc(code)}`, { fetch: f }),
 
@@ -162,6 +200,7 @@ export const api = {
 	labelsUrl: (options: {
 		skus?: string[];
 		locations?: string[];
+		projects?: number[];
 		layout: string;
 		skip?: number;
 		outline?: boolean;
@@ -169,6 +208,7 @@ export const api = {
 		const params = new URLSearchParams({ layout: options.layout });
 		if (options.skus?.length) params.set('skus', options.skus.join(','));
 		if (options.locations?.length) params.set('locations', options.locations.join(','));
+		if (options.projects?.length) params.set('projects', options.projects.join(','));
 		if (options.skip) params.set('skip', String(options.skip));
 		if (options.outline) params.set('outline', 'true');
 		return `/api/labels?${params.toString()}`;

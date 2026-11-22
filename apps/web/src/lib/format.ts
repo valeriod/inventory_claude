@@ -38,3 +38,13 @@ export const REASON_LABELS: Record<string, string> = {
 	count: 'Counted',
 	reserve_consume: 'Used for project'
 };
+
+export const PROJECT_STATUS_LABELS: Record<string, string> = {
+	planning: 'Planning',
+	active: 'Active',
+	completed: 'Completed',
+	cancelled: 'Cancelled'
+};
+
+/** Projects that can still reserve stock. */
+export const OPEN_PROJECT_STATUSES = ['planning', 'active'] as const;

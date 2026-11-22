@@ -1,4 +1,9 @@
-import type { Reservation, ReservationStatus } from '@inventory/shared';
+import type {
+	PickLine,
+	Reservation,
+	ReservationStatus,
+	ReservationWithProject
+} from '@inventory/shared';
 import { sql, type Selectable } from 'kysely';
 import { InsufficientStockError, InvalidOperationError, NotFoundError } from '../errors.ts';
 import type { ReservationsTable } from '../schema.ts';
@@ -79,6 +84,82 @@ export class ReservationRepository {
 		if (status?.length) query = query.where('status', 'in', status);
 		const rows = await query.orderBy('created_at').orderBy('id').execute();
 		return rows.map(toReservation);
+	}
+
+	/** Reservations of an item with their project (newest first). */
+	async listBySkuWithProject(
+		sku: string,
+		status?: ReservationStatus[]
+	): Promise<ReservationWithProject[]> {
+		let query = this.ctx.db
+			.selectFrom('reservations as r')
+			.innerJoin('projects as p', 'p.id', 'r.project_id')
+			.selectAll('r')
+			.select(['p.name as project_name', 'p.status as project_status'])
+			.where('r.sku', '=', sku);
+		if (status?.length) query = query.where('r.status', 'in', status);
+		const rows = await query.orderBy('r.updated_at', 'desc').orderBy('r.id', 'desc').execute();
+		return rows.map((row) => ({
+			...toReservation(row),
+			project: { id: row.project_id, name: row.project_name, status: row.project_status }
+		}));
+	}
+
+	/**
+	 * The lines of a project with item stock: open lines first (by location, then SKU), then
+	 * consumed and released ones.
+	 */
+	async pickList(projectId: number): Promise<PickLine[]> {
+		await new ProjectRepository(this.ctx).get(projectId);
+		const rows = await this.ctx.db
+			.selectFrom('reservations as r')
+			.innerJoin('items as i', 'i.sku', 'r.sku')
+			.selectAll('r')
+			.select([
+				'i.name as item_name',
+				'i.category_id',
+				'i.location_id',
+				'i.qty_on_hand',
+				'i.archived_at',
+				(eb) =>
+					eb
+						.selectFrom('reservations as o')
+						.select(sql<number>`cast(coalesce(sum(o.qty_reserved), 0) as bigint)`.as('total'))
+						.whereRef('o.sku', '=', 'r.sku')
+						.where('o.status', '=', 'reserved')
+						.as('item_reserved')
+			])
+			.where('r.project_id', '=', projectId)
+			.execute();
+		const statusOrder: Record<ReservationStatus, number> = {
+			reserved: 0,
+			consumed: 1,
+			released: 2
+		};
+		return rows
+			.map((row): PickLine => {
+				const reservation = toReservation(row);
+				const open = reservation.status === 'reserved';
+				return {
+					...reservation,
+					item: {
+						name: row.item_name,
+						categoryId: row.category_id,
+						locationId: row.location_id,
+						qtyOnHand: row.qty_on_hand,
+						qtyAvailable: row.qty_on_hand - Number(row.item_reserved ?? 0),
+						archivedAt: row.archived_at
+					},
+					shortBy: open ? Math.max(0, reservation.qtyReserved - row.qty_on_hand) : 0
+				};
+			})
+			.sort(
+				(a, b) =>
+					statusOrder[a.status] - statusOrder[b.status] ||
+					(a.item.locationId ?? Infinity) - (b.item.locationId ?? Infinity) ||
+					a.sku.localeCompare(b.sku) ||
+					a.id - b.id
+			);
 	}
 
 	async availability(sku: string): Promise<Availability> {
@@ -193,19 +274,63 @@ export class ReservationRepository {
 		});
 	}
 
-	/** Take the reserved parts out of stock: writes a `reserve_consume` movement. */
-	async consume(id: number, note?: string | null): Promise<Reservation> {
+	/**
+	 * Take reserved parts out of stock with a `reserve_consume` movement. Without `qty` the whole
+	 * reservation is consumed; with a smaller `qty` the rest stays reserved (partial pick).
+	 */
+	async consume(
+		id: number,
+		options: { qty?: number | undefined; note?: string | null | undefined } = {}
+	): Promise<Reservation> {
 		return inTransaction(this.ctx, async (tx) => {
 			const reservation = await this.getOpen(tx, id);
+			const qty = options.qty ?? reservation.qtyReserved;
+			assertPositive(qty);
+			if (qty > reservation.qtyReserved) {
+				throw new InvalidOperationError(
+					`Only ${reservation.qtyReserved} is reserved; record extra use as a normal stock movement`
+				);
+			}
 			await applyStockDelta(tx, {
 				sku: reservation.sku,
-				delta: -reservation.qtyReserved,
+				delta: -qty,
 				reason: 'reserve_consume',
 				projectId: reservation.projectId,
 				reservationId: id,
-				note: note ?? null
+				note: options.note ?? null
 			});
-			return this.setFields(tx, id, { status: 'consumed' });
+			return qty === reservation.qtyReserved
+				? this.setFields(tx, id, { status: 'consumed' })
+				: this.setFields(tx, id, { qty_reserved: reservation.qtyReserved - qty });
+		});
+	}
+
+	/**
+	 * Consume every open reservation of a project, all or nothing: if one line is short, nothing
+	 * is taken out of stock.
+	 */
+	async consumeAll(projectId: number, note?: string | null): Promise<Reservation[]> {
+		return inTransaction(this.ctx, async (tx) => {
+			await new ProjectRepository(tx).get(projectId);
+			const repo = new ReservationRepository(tx);
+			const open = await repo.listByProject(projectId, ['reserved']);
+			const consumed: Reservation[] = [];
+			for (const r of open) consumed.push(await repo.consume(r.id, { note }));
+			return consumed;
+		});
+	}
+
+	/** Release every open reservation of a project; returns how many were released. */
+	async releaseAll(projectId: number): Promise<number> {
+		return inTransaction(this.ctx, async (tx) => {
+			await new ProjectRepository(tx).get(projectId);
+			const result = await tx.db
+				.updateTable('reservations')
+				.set({ status: 'released', updated_at: tx.now() })
+				.where('project_id', '=', projectId)
+				.where('status', '=', 'reserved')
+				.executeTakeFirst();
+			return Number(result.numUpdatedRows);
 		});
 	}
 

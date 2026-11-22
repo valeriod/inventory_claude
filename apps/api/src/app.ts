@@ -11,6 +11,7 @@ import { itemRoutes } from './routes/items.ts';
 import { labelRoutes } from './routes/labels.ts';
 import { locationRoutes } from './routes/locations.ts';
 import { lookupRoutes } from './routes/lookup.ts';
+import { projectRoutes, reservationRoutes } from './routes/projects.ts';
 import { VERSION } from './version.ts';
 
 export interface AppOptions {
@@ -39,6 +40,8 @@ export function createApp({ conn, staticDir, auth: authConfig, publicUrl }: AppO
 	api.route('/categories', categoryRoutes(repos));
 	api.route('/items', itemRoutes(repos));
 	api.route('/locations', locationRoutes(repos));
+	api.route('/projects', projectRoutes(repos));
+	api.route('/reservations', reservationRoutes(repos));
 	api.route('/lookup', lookupRoutes(repos));
 	api.route('/labels', labelRoutes(repos, { publicUrl }));
 

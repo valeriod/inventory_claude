@@ -54,6 +54,32 @@
 	<a class="btn" href={resolve('/scan?mode=receive')}>Receive stock</a>
 </div>
 
+<section class="card mb-6">
+	<div class="mb-3 flex items-center justify-between gap-2">
+		<h2 class="font-semibold">Active projects</h2>
+		<a class="link text-sm" href={resolve('/projects')}>All projects</a>
+	</div>
+	{#if data.projects.length === 0}
+		<p class="text-sm text-slate-500">No active projects.</p>
+	{:else}
+		<ul class="divide-y divide-slate-100">
+			{#each data.projects as p (p.id)}
+				<li class="flex items-center justify-between gap-3 py-2">
+					<a class="link min-w-0 truncate" href={resolve('/projects/[id]', { id: String(p.id) })}>
+						{p.name}
+					</a>
+					<span class="shrink-0 text-sm text-slate-600">
+						{p.openLines} reserved
+						{#if p.shortLines > 0}<span class="font-medium text-red-700">
+								· {p.shortLines} short
+							</span>{/if}
+					</span>
+				</li>
+			{/each}
+		</ul>
+	{/if}
+</section>
+
 <section class="card">
 	<h2 class="mb-3 font-semibold">Low stock</h2>
 	{#if data.lowStock.items.length === 0}
