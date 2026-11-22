@@ -74,6 +74,16 @@ export interface ReservationsTable {
 	updated_at: Timestamp;
 }
 
+export interface ProjectPartsTable {
+	id: Generated<number>;
+	project_id: number;
+	sku: string;
+	qty_needed: number;
+	note: string | null;
+	created_at: Timestamp;
+	updated_at: Timestamp;
+}
+
 export interface StockMovementsTable {
 	id: Generated<number>;
 	sku: string;
@@ -91,5 +101,6 @@ export interface Database {
 	projects: ProjectsTable;
 	items: ItemsTable;
 	reservations: ReservationsTable;
+	project_parts: ProjectPartsTable;
 	stock_movements: StockMovementsTable;
 }

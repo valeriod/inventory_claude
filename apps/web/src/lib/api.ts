@@ -10,6 +10,11 @@ import type {
 	ItemWithAvailability,
 	Location,
 	LookupResult,
+	BomLine,
+	ProjectPart,
+	Report,
+	ReportKind,
+	SetProjectPartRequest,
 	PickLine,
 	ProjectSummary,
 	Reservation,
@@ -98,6 +103,16 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
 const enc = encodeURIComponent;
 
+/** Report query string: filters plus format and the browser's time zone (for PDF dates). */
+function reportParams(query: URLSearchParams, format: string): string {
+	const params = new URLSearchParams(query);
+	params.delete('report');
+	params.delete('project');
+	params.set('format', format);
+	params.set('tz', Intl.DateTimeFormat().resolvedOptions().timeZone);
+	return params.toString();
+}
+
 export const api = {
 	health: (f?: Fetch) => request<HealthResponse>('/health', { fetch: f }),
 
@@ -183,7 +198,27 @@ export const api = {
 				body: { note: note ?? null }
 			}),
 		releaseAll: (id: number) =>
-			request<{ released: number }>(`/projects/${id}/release-all`, { method: 'POST' })
+			request<{ released: number }>(`/projects/${id}/release-all`, { method: 'POST' }),
+		bom: (id: number, f?: Fetch) => request<BomLine[]>(`/projects/${id}/bom`, { fetch: f }),
+		setPart: (id: number, sku: string, body: SetProjectPartRequest) =>
+			request<ProjectPart>(`/projects/${id}/parts/${enc(sku)}`, { method: 'PUT', body }),
+		removePart: (id: number, sku: string) =>
+			request<void>(`/projects/${id}/parts/${enc(sku)}`, { method: 'DELETE' }),
+		reserveNeeded: (id: number) =>
+			request<{ reserved: number }>(`/projects/${id}/reserve-needed`, { method: 'POST' })
+	},
+
+	reports: {
+		/** `query` holds report filters, e.g. { category: '3' }. */
+		get: (kind: ReportKind, query: URLSearchParams, f?: Fetch) => {
+			const path = kind === 'project' ? `project/${query.get('project') ?? ''}` : kind;
+			return request<Report>(`/reports/${path}?${reportParams(query, 'json')}`, { fetch: f });
+		},
+		/** Download URL (CSV/PDF), opened rather than fetched. */
+		url: (kind: ReportKind, query: URLSearchParams, format: 'csv' | 'pdf'): string => {
+			const path = kind === 'project' ? `project/${query.get('project') ?? ''}` : kind;
+			return `/api/reports/${path}?${reportParams(query, format)}`;
+		}
 	},
 
 	reservations: {

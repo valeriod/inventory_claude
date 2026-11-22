@@ -233,6 +233,17 @@ export class ItemRepository {
 		return conds;
 	}
 
+	/** Name and category of the given SKUs (missing SKUs are skipped). */
+	async summaries(skus: string[]): Promise<{ sku: string; name: string; categoryId: number }[]> {
+		if (skus.length === 0) return [];
+		const rows = await this.ctx.db
+			.selectFrom('items')
+			.select(['sku', 'name', 'category_id'])
+			.where('sku', 'in', skus)
+			.execute();
+		return rows.map((r) => ({ sku: r.sku, name: r.name, categoryId: r.category_id }));
+	}
+
 	async list(filter: ItemFilter = {}): Promise<ItemPage> {
 		const conds = this.conditions(filter);
 		const limit = Math.min(Math.max(filter.limit ?? 50, 1), MAX_PAGE_SIZE);
@@ -458,7 +469,9 @@ export class ItemRepository {
 	async delete(sku: string): Promise<void> {
 		await withConstraintErrors(
 			this.ctx,
-			{ foreign_key: `Item ${sku} has stock history or reservations; archive it instead` },
+			{
+				foreign_key: `Item ${sku} has stock history, reservations or is on a project parts list; archive it instead`
+			},
 			async () => {
 				const result = await this.ctx.db
 					.deleteFrom('items')

@@ -5,6 +5,7 @@ import { CategoryRepository } from './categories.ts';
 import type { RepoContext } from './context.ts';
 import { ItemRepository } from './items.ts';
 import { LocationRepository } from './locations.ts';
+import { ProjectPartRepository } from './project-parts.ts';
 import { ProjectRepository } from './projects.ts';
 import { ReservationRepository } from './reservations.ts';
 import { StockRepository } from './stock.ts';
@@ -13,6 +14,7 @@ export interface Repositories {
 	categories: CategoryRepository;
 	locations: LocationRepository;
 	projects: ProjectRepository;
+	projectParts: ProjectPartRepository;
 	items: ItemRepository;
 	stock: StockRepository;
 	reservations: ReservationRepository;
@@ -29,6 +31,7 @@ function build(ctx: RepoContext): Repositories {
 		categories: new CategoryRepository(ctx),
 		locations: new LocationRepository(ctx),
 		projects: new ProjectRepository(ctx),
+		projectParts: new ProjectPartRepository(ctx),
 		items: new ItemRepository(ctx),
 		stock: new StockRepository(ctx),
 		reservations: new ReservationRepository(ctx),

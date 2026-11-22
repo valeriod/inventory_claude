@@ -1,6 +1,7 @@
 import type { Migration } from 'kysely/migration';
 import type { DatabaseDialect } from '@inventory/shared';
 import { coreSchema } from './0001_core.ts';
+import { projectPartsSchema } from './0002_project_parts.ts';
 
 /**
  * All migrations, keyed by a sortable name. Kept in code rather than loaded from disk so the API
@@ -9,6 +10,7 @@ import { coreSchema } from './0001_core.ts';
  */
 export function getMigrations(dialect: DatabaseDialect): Record<string, Migration> {
 	return {
-		'0001_core': coreSchema(dialect)
+		'0001_core': coreSchema(dialect),
+		'0002_project_parts': projectPartsSchema(dialect)
 	};
 }

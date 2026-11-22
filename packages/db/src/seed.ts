@@ -242,7 +242,7 @@ export async function seedDemoData(repos: Repositories): Promise<boolean> {
 			locationId: binA2.id,
 			attributes: { capacitance: 100e-9, voltage_v: 50, dielectric: 'X7R', package: '0805' }
 		});
-		await r.items.create({
+		const cap470u = await r.items.create({
 			categoryId: capacitors.id,
 			name: '470µF 25V electrolytic',
 			qtyOnHand: 12,
@@ -318,6 +318,16 @@ export async function seedDemoData(repos: Repositories): Promise<boolean> {
 		await r.reservations.reserve({ projectId: psu.id, sku: res220.sku, qty: 2 });
 		await r.reservations.reserve({ projectId: psu.id, sku: cap100n.sku, qty: 4 });
 		await r.reservations.reserve({ projectId: psu.id, sku: wireRed.sku, qty: 1_500 });
+		// Parts list: everything reserved above, plus filter capacitors that are not all in stock.
+		for (const [sku, qtyNeeded] of [
+			[lm317.sku, 1],
+			[res220.sku, 2],
+			[cap100n.sku, 4],
+			[wireRed.sku, 1_500],
+			[cap470u.sku, 20]
+		] as const) {
+			await r.projectParts.set({ projectId: psu.id, sku, qtyNeeded });
+		}
 
 		await r.stock.adjust({ sku: res10k.sku, delta: -20, reason: 'consume', note: 'Misc. repairs' });
 		await r.stock.count({ sku: cap100n.sku, countedQty: 298, note: 'Stocktake' });

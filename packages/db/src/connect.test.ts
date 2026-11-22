@@ -1,3 +1,4 @@
+import { getMigrations } from './migrations/index.ts';
 import { sql } from 'kysely';
 import { describe, expect, it } from 'vitest';
 import { migrateToEmpty, migrateToLatest } from './migrate.ts';
@@ -10,6 +11,7 @@ const CORE_TABLES = [
 	'projects',
 	'items',
 	'reservations',
+	'project_parts',
 	'stock_movements'
 ];
 
@@ -55,7 +57,9 @@ describe('database connection and migrations', () => {
 		const down = await migrateToEmpty(conn);
 		expect(down.every((r) => r.status === 'Success')).toBe(true);
 		for (const table of CORE_TABLES) expect(await tableExists(conn, table)).toBe(false);
-		expect(await migrateToLatest(conn)).toHaveLength(1);
+		expect(await migrateToLatest(conn)).toHaveLength(
+			Object.keys(getMigrations(conn.dialect)).length
+		);
 	});
 
 	it('enforces foreign keys', async () => {

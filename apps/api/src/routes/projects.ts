@@ -3,6 +3,7 @@ import {
 	createProjectRequestSchema,
 	listProjectsQuerySchema,
 	reserveRequestSchema,
+	setProjectPartRequestSchema,
 	updateProjectRequestSchema,
 	updateReservationRequestSchema
 } from '@inventory/shared';
@@ -55,6 +56,26 @@ export function projectRoutes(repos: Repositories): Hono {
 		if (item.archivedAt) throw new InvalidOperationError(`Item ${item.sku} is archived`);
 		const reservation = await repos.reservations.reserve({ projectId, ...input });
 		return c.json(reservation, 201);
+	});
+
+	/** Bill of materials: parts list, reservations, use, and what to buy. */
+	app.get('/:id/bom', async (c) => c.json(await repos.projectParts.bom(intParam(c, 'id'))));
+
+	app.put('/:id/parts/:sku', async (c) => {
+		const projectId = intParam(c, 'id');
+		const input = await jsonBody(c, setProjectPartRequestSchema);
+		return c.json(await repos.projectParts.set({ projectId, sku: c.req.param('sku'), ...input }));
+	});
+
+	app.delete('/:id/parts/:sku', async (c) => {
+		await repos.projectParts.remove(intParam(c, 'id'), c.req.param('sku'));
+		return c.body(null, 204);
+	});
+
+	/** Reserve, for each needed part, what available stock covers. */
+	app.post('/:id/reserve-needed', async (c) => {
+		const reserved = await repos.projectParts.reserveNeeded(intParam(c, 'id'));
+		return c.json({ reserved });
 	});
 
 	app.post('/:id/consume-all', async (c) => {

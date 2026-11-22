@@ -26,6 +26,12 @@
 			match: (p: string) => p.startsWith('/categories')
 		},
 		{
+			href: resolve('/reports'),
+			label: 'Reports',
+			match: (p: string) => p.startsWith('/reports'),
+			mobile: false
+		},
+		{
 			href: resolve('/locations'),
 			label: 'Locations',
 			match: (p: string) => p.startsWith('/locations')
@@ -46,9 +52,11 @@
 	<title>Inventory</title>
 </svelte:head>
 
-<div class="min-h-dvh bg-slate-50 pb-16 text-slate-900 sm:pb-0">
+<div class="min-h-dvh bg-slate-50 pb-16 text-slate-900 sm:pb-0 print:bg-white print:pb-0">
 	{#if showChrome}
-		<header class="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur">
+		<header
+			class="sticky top-0 z-10 print:hidden border-b border-slate-200 bg-white/95 backdrop-blur"
+		>
 			<div class="mx-auto flex max-w-6xl items-center gap-6 px-4 py-3">
 				<a href={resolve('/')} class="text-lg font-semibold">Inventory</a>
 				<nav class="hidden gap-1 sm:flex" aria-label="Main">
@@ -78,7 +86,7 @@
 
 	{#if showChrome}
 		<nav
-			class="fixed inset-x-0 bottom-0 z-10 grid grid-cols-5 border-t border-slate-200 bg-white sm:hidden"
+			class="fixed inset-x-0 bottom-0 z-10 grid grid-cols-5 print:hidden border-t border-slate-200 bg-white sm:hidden"
 			aria-label="Main"
 		>
 			{#each nav.filter((n) => n.mobile !== false) as item (item.href)}
