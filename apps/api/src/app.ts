@@ -57,6 +57,18 @@ export function createApp({ conn, staticDir, auth: authConfig, publicUrl }: AppO
 		if (!existsSync(fallback)) {
 			throw new Error(`STATIC_DIR ${staticDir} does not contain 200.html; build the web app first`);
 		}
+		// Hashed build files never change; the service worker and pages must be revalidated so
+		// updates are picked up (plan §M8).
+		app.use('/_app/immutable/*', async (c, next) => {
+			await next();
+			if (c.res.ok) c.header('cache-control', 'public, max-age=31536000, immutable');
+		});
+		app.use('*', async (c, next) => {
+			await next();
+			if (!c.req.path.startsWith('/_app/immutable/') && !c.res.headers.has('cache-control')) {
+				c.header('cache-control', 'no-cache');
+			}
+		});
 		app.use('*', serveStatic({ root: staticDir, precompressed: true }));
 		// SPA fallback: any non-API route that isn't a file is handled client-side.
 		app.get('*', serveStatic({ path: fallback, precompressed: true }));

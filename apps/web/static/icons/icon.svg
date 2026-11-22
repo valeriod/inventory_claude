@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+	<!-- Parts bin with a QR finder mark: inventory + scanning -->
+	<rect width="512" height="512" rx="96" fill="#1d4ed8"/>
+	<path d="M112 200h288v176a32 32 0 0 1-32 32H144a32 32 0 0 1-32-32z" fill="#fff"/>
+	<path d="M96 160a24 24 0 0 1 24-24h272a24 24 0 0 1 24 24v40H96z" fill="#bfdbfe"/>
+	<rect x="208" y="244" width="96" height="40" rx="12" fill="#1d4ed8"/>
+	<g fill="#1d4ed8">
+		<rect x="160" y="312" width="56" height="56" rx="6"/>
+		<rect x="296" y="312" width="56" height="56" rx="6"/>
+		<rect x="232" y="328" width="48" height="24" rx="4"/>
+	</g>
+	<g fill="#fff">
+		<rect x="174" y="326" width="28" height="28" rx="3"/>
+		<rect x="310" y="326" width="28" height="28" rx="3"/>
+	</g>
+	<g fill="#1d4ed8">
+		<rect x="181" y="333" width="14" height="14"/>
+		<rect x="317" y="333" width="14" height="14"/>
+	</g>
+</svg>

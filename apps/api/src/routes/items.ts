@@ -101,13 +101,24 @@ export function itemRoutes(repos: Repositories): Hono {
 
 	app.post('/:sku/movements', async (c) => {
 		const input = await jsonBody(c, stockMovementRequestSchema);
-		const result = await repos.stock.adjust({ ...input, sku: c.req.param('sku') });
+		const key = idempotencyKey(c);
+		const { result, replayed } = await repos.stock.adjustOnce(
+			{ ...input, sku: c.req.param('sku') },
+			key && `movement:${key}`
+		);
+		if (replayed) c.header('idempotent-replay', 'true');
 		return c.json(result, 201);
 	});
 
 	app.post('/:sku/count', async (c) => {
 		const input = await jsonBody(c, stockCountRequestSchema);
-		return c.json(await repos.stock.count({ ...input, sku: c.req.param('sku') }));
+		const key = idempotencyKey(c);
+		const { result, replayed } = await repos.stock.countOnce(
+			{ ...input, sku: c.req.param('sku') },
+			key && `count:${key}`
+		);
+		if (replayed) c.header('idempotent-replay', 'true');
+		return c.json(result);
 	});
 
 	app.get('/:sku/reservations', async (c) => {
@@ -117,4 +128,17 @@ export function itemRoutes(repos: Repositories): Hono {
 	});
 
 	return app;
+}
+
+/**
+ * Optional `Idempotency-Key` header (the PWA sends one with stock changes it queued offline), so
+ * a replayed request is applied once.
+ */
+function idempotencyKey(c: Context): string | undefined {
+	const key = c.req.header('idempotency-key');
+	if (key === undefined) return undefined;
+	if (!/^[A-Za-z0-9_-]{8,64}$/.test(key)) {
+		throw new BadRequestError('Idempotency-Key must be 8–64 letters, digits, "-" or "_"');
+	}
+	return key;
 }

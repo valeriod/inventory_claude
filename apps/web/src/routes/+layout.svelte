@@ -1,10 +1,13 @@
 <script lang="ts">
 	import './layout.css';
-	import favicon from '#lib/assets/favicon.svg';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
+	import { onMount } from 'svelte';
 	import { api } from '#lib/api.js';
+	import { formatDateTime } from '#lib/format.js';
+	import { offline, startOfflineSupport } from '#lib/offline/status.svelte.js';
+	import { applyUpdate, install, pwa, startPwa } from '#lib/pwa.svelte.js';
 	import type { LayoutProps } from './$types';
 
 	let { data, children }: LayoutProps = $props();
@@ -45,10 +48,17 @@
 	}
 
 	const showChrome = $derived(page.url.pathname !== '/login');
+	const signedIn = $derived(!data.session.authRequired || data.session.authenticated);
+
+	onMount(startPwa);
+
+	// Offline catalogue and outbox sync run while signed in.
+	$effect(() => {
+		if (signedIn) return startOfflineSupport();
+	});
 </script>
 
 <svelte:head>
-	<link rel="icon" href={favicon} />
 	<title>Inventory</title>
 </svelte:head>
 
@@ -72,12 +82,39 @@
 					{/each}
 				</nav>
 				<div class="ml-auto flex items-center gap-2">
+					{#if offline.pending > 0 || offline.failed > 0}
+						<a
+							href={resolve('/sync')}
+							class="rounded-full px-2.5 py-1 text-xs font-medium {offline.failed > 0
+								? 'bg-red-100 text-red-800'
+								: 'bg-amber-100 text-amber-900'}"
+							data-testid="outbox-badge"
+						>
+							{offline.failed > 0
+								? `${offline.failed} failed`
+								: `${offline.pending} change${offline.pending === 1 ? '' : 's'} to send`}
+						</a>
+					{/if}
+					{#if pwa.canInstall}
+						<button class="btn btn-sm hidden sm:inline-flex" onclick={install}>Install app</button>
+					{/if}
 					{#if data.session.authRequired}
 						<button class="btn btn-sm" onclick={logout}>Log out</button>
 					{/if}
 				</div>
 			</div>
 		</header>
+		{#if !offline.reachable}
+			<div
+				class="border-b border-amber-200 bg-amber-50 px-4 py-2 text-center text-sm text-amber-900 print:hidden"
+				role="status"
+				data-testid="offline-banner"
+			>
+				Offline: showing data saved {offline.syncedAt
+					? formatDateTime(offline.syncedAt)
+					: 'earlier'}. Stock changes are kept and sent when the server is back.
+			</div>
+		{/if}
 	{/if}
 
 	<main class="mx-auto max-w-6xl px-4 py-6">
@@ -100,5 +137,15 @@
 				</a>
 			{/each}
 		</nav>
+	{/if}
+
+	{#if pwa.updateReady}
+		<div
+			class="fixed inset-x-4 bottom-20 z-30 mx-auto flex max-w-md items-center gap-3 rounded-lg bg-slate-900 p-3 pl-4 text-sm text-white shadow-lg sm:bottom-4 print:hidden"
+			role="status"
+		>
+			<span>A new version of the app is ready.</span>
+			<button class="btn btn-sm ml-auto" onclick={applyUpdate}>Reload</button>
+		</div>
 	{/if}
 </div>

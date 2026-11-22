@@ -18,7 +18,9 @@ const plugins: PluginOption[] = [
 			runes: ({ filename }) => (filename.split(/[/\\]/).includes('node_modules') ? undefined : true)
 		},
 		// Static SPA (plan §2): the API serves build/ and falls back to 200.html.
-		adapter: adapter({ fallback: '200.html', precompress: true })
+		adapter: adapter({ fallback: '200.html', precompress: true }),
+		// Registered by the app (#lib/pwa) so it can show an update prompt (plan §M8).
+		serviceWorker: { register: false }
 	})
 ];
 if (https) plugins.push(mkcert());

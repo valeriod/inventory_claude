@@ -372,3 +372,23 @@ describe('locations API', () => {
 		expect((await fx().app.request(`/api/locations/${id}`)).status).toBe(404);
 	});
 });
+
+describe('idempotent stock changes', () => {
+	const api = useApi({ seed: true });
+
+	it('applies a movement with the same Idempotency-Key once', async () => {
+		const headers = { 'idempotency-key': 'offline-0001-abcd' };
+		const body = { reason: 'consume', delta: -2 };
+		const first = await api().send('POST', '/api/items/RES-0001/movements', body, headers);
+		const second = await api().send('POST', '/api/items/RES-0001/movements', body, headers);
+		expect(first.status).toBe(201);
+		expect(second.headers.get('idempotent-replay')).toBe('true');
+		expect(await second.json()).toEqual(await first.json());
+		const item = await json<{ qtyOnHand: number }>(await api().send('GET', '/api/items/RES-0001'));
+		expect(item.qtyOnHand).toBe(428);
+		const bad = await api().send('POST', '/api/items/RES-0001/movements', body, {
+			'idempotency-key': 'no spaces!'
+		});
+		expect(bad.status).toBe(400);
+	});
+});

@@ -42,7 +42,7 @@ Build an inventory system for heterogeneous items (electronic components, electr
 |---|---|---|
 | Language | TypeScript end-to-end | Shared types/validation between API and PWA |
 | Frontend | SvelteKit 3 + Svelte 5 (runes), `adapter-static` (SPA mode) | Requested framework; static output is easy to serve and cache as a PWA |
-| PWA | `@vite-pwa/sveltekit` (Workbox) | Manifest, service worker, install prompt, update flow |
+| PWA | SvelteKit service worker + IndexedDB (no Workbox; see M8 notes) | Manifest, offline shell, offline catalogue, queued stock changes, install prompt, update flow |
 | UI | Tailwind CSS + a light component lib (e.g. Skeleton or bits-ui) | Fast, mobile-friendly |
 | Scanning | Native `BarcodeDetector` API, fallback to `zxing-wasm` | Native is fast on Android/Chrome; iOS Safari needs the WASM fallback |
 | API | Hono on Node 24 LTS | Small, typed, fast; easy to test |
@@ -421,10 +421,26 @@ Import / Export
 
 ### 6.4 Offline behaviour (v1)
 
-- App shell precached by Workbox → app opens offline.
+- App shell precached by the service worker → app opens offline.
 - Item catalogue cached in IndexedDB (stale-while-revalidate) → search and lookup work offline.
-- Quantity adjustments made offline are **queued** (Workbox Background Sync) and replayed when online; the server applies them as deltas (not absolute values) so they merge safely. Conflicts (e.g. would go negative) are surfaced in an "outbox" view.
+- Quantity adjustments made offline are **queued** (an IndexedDB outbox; see M8 notes) and replayed when online; the server applies them as deltas (not absolute values) so they merge safely. Conflicts (e.g. would go negative) are surfaced in an "outbox" view.
 - Full offline editing of categories/items is out of scope for v1.
+
+**Implementation notes (M8):**
+
+- **No Workbox.** SvelteKit's own service worker (`src/service-worker/`) precaches the app shell: build files, static assets and `200.html` as the offline fallback for every route. Pages load network-first, so online behaviour is unchanged. Other hashed build files, such as the scanner's WASM, are cached on first use; the app fetches the WASM once in the background so scanning works offline. API responses are never cached by the service worker.
+- **Offline catalogue.** Items (including archived), categories, locations and projects are saved in IndexedDB on start, when the connection returns and every 5 minutes. They are also updated after every online item read and stock change. When the server cannot be reached, the API client answers reads from this copy:
+  - the item list (search with the server's tokenizer, now in `packages/shared`; category, location, low stock, sort, paging);
+  - item pages (history and reservations are empty offline);
+  - lookups and scans;
+  - categories, locations and the project list.
+  Custom-field filters, project pages and reports need the server.
+- **Outbox instead of Background Sync.** Background Sync is not available in Safari or Firefox, so queued stock changes live in IndexedDB and are sent by the page: on start, when the connection returns, and every 30 seconds while anything is waiting. Each change carries an `Idempotency-Key`; the server stores keys for 30 days (`request_keys`, migration `0003`) and returns the original result for a repeat, so a change whose reply was lost is not applied twice. Movements are deltas and merge safely. Counts set the counted quantity when they arrive. Changes the server refuses (for example, not enough stock any more) are marked failed on `/sync` for retry or discard. An expired session pauses sending until the user logs in again. A change that would take the offline copy below zero is refused immediately.
+- **Reachability** is judged from API requests rather than `navigator.onLine`, so a phone on Wi-Fi without access to the server counts as offline. The last session state is remembered, so the app starts offline.
+- **UI:** an offline banner, a "N changes to send" badge linking to `/sync` (offline copy, outbox, install), "Install app" when the browser offers it, iOS "Add to Home Screen" instructions, and a "new version ready → Reload" notice (the new service worker waits until accepted).
+- **Manifest and icons:** `static/manifest.webmanifest` with Scan and Receive shortcuts. The icons are rendered from `static/icons/icon.svg` by `scripts/icons.mjs`.
+- **Caching headers:** `/_app/immutable/*` is cached for a year; everything else is revalidated.
+- **No Lighthouse audit:** Lighthouse 12 removed the PWA category, so the end-to-end tests cover installability (manifest, icons) and offline behaviour instead.
 
 ## 7. Security
 
@@ -481,7 +497,7 @@ The compose files and Caddyfile examples ship in `docker/`. Updating the guide i
 | **M5** ✅ | Scanning | `Scanner` component, lookup/adjust/receive flows, QR label PDF generation |
 | **M6** ✅ | Projects & reservations | Project CRUD, reservations with availability checks, pick list, consume/release |
 | **M7** ✅ | Reports | Inventory, low-stock, project BOM/shortage, movement history; CSV + PDF + print CSS |
-| **M8** | PWA polish & offline | Manifest, icons, install prompt, offline catalogue, queued adjustments, update toast |
+| **M8** ✅ | PWA polish & offline | Manifest, icons, install prompt, offline catalogue, queued adjustments, update toast |
 | **M9** | Import/export, deploy & hardening | CSV import with dry-run, stocktake flow, more E2E coverage, Docker image, compose/Caddy examples, backup job, `db:transfer`, `docs/DEPLOY.md` verified end-to-end on a clean machine |
 
 M1–M3 (backend) and M4 (PWA shell against a mock API) can proceed in parallel once the shared schemas from M2 are stable.
@@ -506,4 +522,4 @@ M1–M3 (backend) and M4 (PWA shell against a mock API) can proceed in parallel 
 - **Repository/API:** Vitest against real SQLite (in-memory) and Postgres (Testcontainers) — same suite, both dialects.
 - **Concurrency:** parallel decrement / reservation tests to prove no negative stock or over-reservation.
 - **E2E:** Playwright with mobile emulation; scanner tested with injected fake camera streams of barcode images.
-- **PWA:** Lighthouse PWA audit in CI.
+- **PWA:** E2E covers the manifest/icons and offline use (Lighthouse 12 dropped its PWA audit).

@@ -95,6 +95,13 @@ export interface StockMovementsTable {
 	created_at: Timestamp;
 }
 
+export interface RequestKeysTable {
+	key: string;
+	/** JSON of the original result. */
+	response: string;
+	created_at: Timestamp;
+}
+
 export interface Database {
 	categories: CategoriesTable;
 	locations: LocationsTable;
@@ -103,4 +110,5 @@ export interface Database {
 	reservations: ReservationsTable;
 	project_parts: ProjectPartsTable;
 	stock_movements: StockMovementsTable;
+	request_keys: RequestKeysTable;
 }
