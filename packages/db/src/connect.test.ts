@@ -12,6 +12,7 @@ const CORE_TABLES = [
 	'items',
 	'reservations',
 	'project_parts',
+	'request_keys',
 	'stock_movements'
 ];
 

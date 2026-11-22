@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { connect, type DatabaseConnection } from '@inventory/db';
@@ -34,6 +34,19 @@ describe('api', () => {
 		const dir = mkdtempSync(join(tmpdir(), 'inventory-static-'));
 		writeFileSync(join(dir, '200.html'), '<html>spa</html>');
 		writeFileSync(join(dir, 'robots.txt'), 'User-agent: *');
+		mkdirSync(join(dir, '_app/immutable'), { recursive: true });
+		writeFileSync(join(dir, '_app/immutable/app.abc123.js'), 'export {}');
+		writeFileSync(join(dir, 'manifest.webmanifest'), '{}');
+
+		it('caches hashed build files forever and revalidates everything else', async () => {
+			const app = createApp({ conn, staticDir: dir });
+			const asset = await app.request('/_app/immutable/app.abc123.js');
+			expect(asset.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
+			const shell = await app.request('/items/RES-0001');
+			expect(shell.headers.get('cache-control')).toBe('no-cache');
+			const manifest = await app.request('/manifest.webmanifest');
+			expect(manifest.headers.get('content-type')).toContain('application/manifest+json');
+		});
 
 		it('serves static files', async () => {
 			const res = await createApp({ conn, staticDir: dir }).request('/robots.txt');

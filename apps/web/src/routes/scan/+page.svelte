@@ -121,14 +121,14 @@
 	function stockDone(result: StockChangeResponse) {
 		if (!stock) return;
 		const { item, category } = stock;
-		const delta = result.movement?.delta ?? 0;
+		const delta = result.movement?.delta ?? result.qtyOnHand - item.qtyOnHand;
 		const sign = delta > 0 ? '+' : delta < 0 ? '−' : '±';
 		recent = [
 			{
 				id: nextId++,
 				sku: item.sku,
 				name: item.name,
-				text: `${sign}${formatQty(Math.abs(delta), category)} → ${formatQty(result.qtyOnHand, category)}`
+				text: `${sign}${formatQty(Math.abs(delta), category)} → ${formatQty(result.qtyOnHand, category)}${result.queued ? ' (queued)' : ''}`
 			},
 			...recent
 		].slice(0, 10);

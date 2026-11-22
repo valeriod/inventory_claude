@@ -83,4 +83,36 @@ describe('StockRepository', () => {
 		expect((await repos.items.get(sku)).qtyOnHand).toBe(0);
 		expect(await repos.stock.movements({ sku, reasons: ['consume'] })).toHaveLength(10);
 	});
+
+	it('applies a keyed stock change only once', async () => {
+		const { repos } = fx();
+		const cat = await createCountCategory(repos);
+		const { sku } = await repos.items.create({ categoryId: cat.id, name: 'Keyed', qtyOnHand: 10 });
+		const input = { sku, delta: -3, reason: 'consume' as const };
+		const first = await repos.stock.adjustOnce(input, 'movement:abc12345');
+		const again = await repos.stock.adjustOnce(input, 'movement:abc12345');
+		expect(first.replayed).toBe(false);
+		expect(again).toEqual({ result: first.result, replayed: true });
+		expect((await repos.items.get(sku)).qtyOnHand).toBe(7);
+
+		const counted = await repos.stock.countOnce({ sku, countedQty: 5 }, 'count:abc12345');
+		await repos.stock.adjust({ sku, delta: 4, reason: 'receive' });
+		const replay = await repos.stock.countOnce({ sku, countedQty: 5 }, 'count:abc12345');
+		expect(replay).toEqual({ result: counted.result, replayed: true });
+		expect((await repos.items.get(sku)).qtyOnHand).toBe(9);
+	});
+
+	it('does not store the key when the change fails', async () => {
+		const { repos } = fx();
+		const cat = await createCountCategory(repos);
+		const { sku } = await repos.items.create({ categoryId: cat.id, name: 'Few', qtyOnHand: 1 });
+		const input = { sku, delta: -2, reason: 'consume' as const };
+		await expect(repos.stock.adjustOnce(input, 'movement:fail1234')).rejects.toBeInstanceOf(
+			InsufficientStockError
+		);
+		await repos.stock.adjust({ sku, delta: 5, reason: 'receive' });
+		const retry = await repos.stock.adjustOnce(input, 'movement:fail1234');
+		expect(retry.replayed).toBe(false);
+		expect((await repos.items.get(sku)).qtyOnHand).toBe(4);
+	});
 });

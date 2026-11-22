@@ -129,12 +129,77 @@ export async function applyStockDelta(
 	});
 }
 
+/** How long idempotency keys are remembered. */
+const REQUEST_KEY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Run a stock change at most once per key: a known key returns the stored result, otherwise the
+ * change and the key are written in one transaction. A concurrent duplicate fails on the key's
+ * primary key, rolls back, and then finds the stored result.
+ */
+async function once<T>(
+	ctx: RepoContext,
+	key: string | undefined,
+	fn: (tx: RepoContext) => Promise<T>
+): Promise<{ result: T; replayed: boolean }> {
+	if (!key) return { result: await inTransaction(ctx, fn), replayed: false };
+	const stored = async () => {
+		const row = await ctx.db
+			.selectFrom('request_keys')
+			.select('response')
+			.where('key', '=', key)
+			.executeTakeFirst();
+		return row ? (JSON.parse(row.response) as T) : undefined;
+	};
+	const previous = await stored();
+	if (previous !== undefined) return { result: previous, replayed: true };
+	try {
+		const result = await inTransaction(ctx, async (tx) => {
+			const value = await fn(tx);
+			const now = tx.now();
+			await tx.db
+				.insertInto('request_keys')
+				.values({ key, response: JSON.stringify(value), created_at: now })
+				.execute();
+			const cutoff = new Date(Date.parse(now) - REQUEST_KEY_TTL_MS).toISOString();
+			await tx.db.deleteFrom('request_keys').where('created_at', '<', cutoff).execute();
+			return value;
+		});
+		return { result, replayed: false };
+	} catch (err) {
+		if (ctx.adapter.constraintViolation(err) === 'unique') {
+			const raced = await stored();
+			if (raced !== undefined) return { result: raced, replayed: true };
+		}
+		throw err;
+	}
+}
+
 export class StockRepository {
 	constructor(private readonly ctx: RepoContext) {}
 
 	/** Receive, consume or adjust stock. */
 	adjust(input: StockChangeInput): Promise<StockChangeResult> {
 		return applyStockDelta(this.ctx, input);
+	}
+
+	/**
+	 * Like adjust(), but at most once per idempotency key (stock changes queued offline and
+	 * replayed by the PWA).
+	 */
+	adjustOnce(
+		input: StockChangeInput,
+		key: string | undefined
+	): Promise<{ result: StockChangeResult; replayed: boolean }> {
+		return once(this.ctx, key, (tx) => applyStockDelta(tx, input));
+	}
+
+	/** Like count(), but at most once per idempotency key. */
+	countOnce(
+		input: { sku: string; countedQty: number; note?: string | null },
+		key: string | undefined
+	): Promise<{ result: CountResult; replayed: boolean }> {
+		return once(this.ctx, key, (tx) => new StockRepository(tx).count(input));
 	}
 
 	/** Record a physical count; writes a `count` movement for the difference, if any. */

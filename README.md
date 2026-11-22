@@ -6,7 +6,7 @@ reports. It runs on SQLite or Postgres.
 
 See [`2026-11-17-inventory-app-plan.md`](2026-11-17-inventory-app-plan.md) for the full design and milestones.
 
-**Status:** M0–M6 are done: setup, data layer, categories with custom fields and units, the items and stock API, the web app (login, search, items, categories, locations), barcode/QR scanning with printable QR labels, projects with parts lists, reservations and pick lists, and reports (inventory, low stock, project bill of materials, stock movements) as CSV, PDF or print. Next is M8 (PWA polish and offline).
+**Status:** M0–M6 are done: setup, data layer, categories with custom fields and units, the items and stock API, the web app (login, search, items, categories, locations), barcode/QR scanning with printable QR labels, projects with parts lists, reservations and pick lists, and reports (inventory, low stock, project bill of materials, stock movements) as CSV, PDF or print, and an installable app that works offline and sends queued stock changes when it reconnects. Next is M9 (import/export, deploy guide and hardening).
 
 ## Requirements
 

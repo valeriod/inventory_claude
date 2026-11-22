@@ -104,3 +104,7 @@
 		</ul>
 	{/if}
 </section>
+
+<p class="mt-6 text-center text-sm print:hidden">
+	<a class="link" href={resolve('/sync')}>Offline & sync</a>
+</p>

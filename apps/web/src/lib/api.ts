@@ -1,5 +1,4 @@
 import type {
-	ApiErrorBody,
 	Category,
 	CategoryWithFields,
 	CreateCategoryRequest,
@@ -30,8 +29,21 @@ import type {
 	UpdateItemRequest,
 	UpdateLocationRequest
 } from '@inventory/shared';
+import { ApiError, request, type Fetch } from './http.ts';
+import {
+	localCategories,
+	localItem,
+	localItems,
+	localLocations,
+	localLookup,
+	localProjects,
+	NotAvailableOffline,
+	updateLocalItem
+} from './offline/catalogue.ts';
+import { enqueue } from './offline/outbox.ts';
+import { refreshOfflineState } from './offline/status.svelte.ts';
 
-export type Fetch = typeof fetch;
+export { ApiError, type Fetch };
 
 export interface SessionResponse {
 	authRequired: boolean;
@@ -41,67 +53,120 @@ export interface SessionResponse {
 export interface StockChangeResponse {
 	qtyOnHand: number;
 	movement: StockMovement | null;
-}
-
-/** Error returned by the API, carrying the `{ error: { code, message, details } }` body. */
-export class ApiError extends Error {
-	constructor(
-		readonly status: number,
-		readonly code: ApiErrorBody['error']['code'] | 'network',
-		message: string,
-		readonly details?: unknown
-	) {
-		super(message);
-		this.name = 'ApiError';
-	}
-
-	/** Validation details as `{ path, message }`, e.g. path `attributes.color` or `name`. */
-	get fieldErrors(): Record<string, string> {
-		if (!Array.isArray(this.details)) return {};
-		const out: Record<string, string> = {};
-		for (const d of this.details as { path?: unknown; message?: unknown }[]) {
-			if (typeof d.path === 'string' && typeof d.message === 'string' && !(d.path in out)) {
-				out[d.path] = d.message;
-			}
-		}
-		return out;
-	}
-}
-
-interface RequestOptions {
-	method?: string;
-	body?: unknown;
-	headers?: Record<string, string>;
-	fetch?: Fetch;
-}
-
-async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-	const { method = 'GET', body, headers = {}, fetch: f = fetch } = options;
-	let res: Response;
-	try {
-		res = await f(`/api${path}`, {
-			method,
-			headers: body === undefined ? headers : { 'content-type': 'application/json', ...headers },
-			body: body === undefined ? undefined : JSON.stringify(body)
-		});
-	} catch {
-		throw new ApiError(0, 'network', 'Cannot reach the server. Check your connection.');
-	}
-	if (res.status === 204) return undefined as T;
-	const data: unknown = await res.json().catch(() => null);
-	if (!res.ok) {
-		const err = (data as ApiErrorBody | null)?.error;
-		throw new ApiError(
-			res.status,
-			err?.code ?? 'internal',
-			err?.message ?? res.statusText,
-			err?.details
-		);
-	}
-	return data as T;
+	/** Saved offline; it will be sent when the server is reachable again. */
+	queued?: boolean;
 }
 
 const enc = encodeURIComponent;
+
+const isNetworkError = (err: unknown) => err instanceof ApiError && err.status === 0;
+
+/**
+ * Try the server; when it cannot be reached, answer from the offline catalogue. If the offline
+ * copy has nothing either, the original "cannot reach the server" error is thrown.
+ */
+async function withOffline<T>(online: () => Promise<T>, fallback: () => Promise<T>): Promise<T> {
+	try {
+		return await online();
+	} catch (err) {
+		if (!isNetworkError(err)) throw err;
+		try {
+			return await fallback();
+		} catch (fallbackError) {
+			throw fallbackError instanceof NotAvailableOffline ? err : fallbackError;
+		}
+	}
+}
+
+const SESSION_KEY = 'inventory.session';
+
+function rememberSession(session: SessionResponse): SessionResponse {
+	try {
+		localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+	} catch {
+		// Storage unavailable; offline start-up will just need the server.
+	}
+	return session;
+}
+
+function lastSession(): SessionResponse {
+	try {
+		const saved = localStorage.getItem(SESSION_KEY);
+		if (saved) return JSON.parse(saved) as SessionResponse;
+	} catch {
+		// fall through
+	}
+	throw new NotAvailableOffline();
+}
+
+/** Keep the offline copy of an item in step with a stock change the server confirmed. */
+function trackStock(sku: string, result: StockChangeResponse): StockChangeResponse {
+	void updateLocalItem(sku, (i) => ({
+		...i,
+		qtyOnHand: result.qtyOnHand,
+		qtyAvailable: result.qtyOnHand - i.qtyReserved
+	})).catch(() => {});
+	return result;
+}
+
+/** Record a stock change offline: queue it and update the offline copy of the item. */
+async function queueStockChange(
+	sku: string,
+	change:
+		{ kind: 'movement'; body: StockMovementRequest } | { kind: 'count'; body: StockCountRequest }
+): Promise<StockChangeResponse> {
+	const item = await localItem(sku);
+	const qtyOnHand =
+		change.kind === 'movement' ? item.qtyOnHand + change.body.delta : change.body.countedQty;
+	if (qtyOnHand < 0) {
+		throw new ApiError(
+			409,
+			'insufficient_stock',
+			`Not enough stock: the offline copy shows ${item.qtyOnHand} base units on hand`
+		);
+	}
+	const category = (await localCategories().catch(() => [])).find((c) => c.id === item.categoryId);
+	await enqueue({
+		...change,
+		id: crypto.randomUUID(),
+		sku,
+		itemName: item.name,
+		...(category && {
+			unit: { unitKind: category.unitKind, displayUnit: category.displayUnit }
+		}),
+		createdAt: new Date().toISOString(),
+		status: 'pending'
+	});
+	await updateLocalItem(sku, (i) => ({
+		...i,
+		qtyOnHand,
+		qtyAvailable: qtyOnHand - i.qtyReserved
+	}));
+	await refreshOfflineState();
+	return { qtyOnHand, movement: null, queued: true };
+}
+
+/** A stock change: sent now, or queued when the server cannot be reached. */
+async function stockChange(
+	sku: string,
+	change:
+		{ kind: 'movement'; body: StockMovementRequest } | { kind: 'count'; body: StockCountRequest }
+): Promise<StockChangeResponse> {
+	const path = `/items/${enc(sku)}/${change.kind === 'movement' ? 'movements' : 'count'}`;
+	try {
+		return trackStock(
+			sku,
+			await request<StockChangeResponse>(path, { method: 'POST', body: change.body })
+		);
+	} catch (err) {
+		if (!isNetworkError(err)) throw err;
+		try {
+			return await queueStockChange(sku, change);
+		} catch (offlineError) {
+			throw offlineError instanceof NotAvailableOffline ? err : offlineError;
+		}
+	}
+}
 
 /** Report query string: filters plus format and the browser's time zone (for PDF dates). */
 function reportParams(query: URLSearchParams, format: string): string {
@@ -116,14 +181,30 @@ function reportParams(query: URLSearchParams, format: string): string {
 export const api = {
 	health: (f?: Fetch) => request<HealthResponse>('/health', { fetch: f }),
 
-	session: (f?: Fetch) => request<SessionResponse>('/auth/session', { fetch: f }),
+	session: (f?: Fetch) =>
+		withOffline(
+			async () => rememberSession(await request<SessionResponse>('/auth/session', { fetch: f })),
+			async () => lastSession()
+		),
 	login: (password: string) =>
 		request<SessionResponse>('/auth/login', { method: 'POST', body: { password } }),
 	logout: () => request<SessionResponse>('/auth/logout', { method: 'POST' }),
 
 	categories: {
-		list: (f?: Fetch) => request<CategoryWithFields[]>('/categories', { fetch: f }),
-		get: (id: number, f?: Fetch) => request<CategoryWithFields>(`/categories/${id}`, { fetch: f }),
+		list: (f?: Fetch) =>
+			withOffline(
+				() => request<CategoryWithFields[]>('/categories', { fetch: f }),
+				localCategories
+			),
+		get: (id: number, f?: Fetch) =>
+			withOffline(
+				() => request<CategoryWithFields>(`/categories/${id}`, { fetch: f }),
+				async () => {
+					const category = (await localCategories()).find((c) => c.id === id);
+					if (!category) throw new ApiError(404, 'not_found', `Category ${id} not found`);
+					return category;
+				}
+			),
 		create: (body: CreateCategoryRequest) =>
 			request<CategoryWithFields>('/categories', { method: 'POST', body }),
 		update: (id: number, body: UpdateCategoryRequest) =>
@@ -139,9 +220,19 @@ export const api = {
 	items: {
 		/** `query` uses the API's query syntax, e.g. "q=wire&attr.color=red". */
 		list: (query: string | URLSearchParams, f?: Fetch) =>
-			request<ItemListResponse>(`/items?${query.toString()}`, { fetch: f }),
+			withOffline(
+				() => request<ItemListResponse>(`/items?${query.toString()}`, { fetch: f }),
+				() => localItems(new URLSearchParams(query.toString()))
+			),
 		get: (sku: string, f?: Fetch) =>
-			request<ItemWithAvailability>(`/items/${enc(sku)}`, { fetch: f }),
+			withOffline(
+				async () => {
+					const item = await request<ItemWithAvailability>(`/items/${enc(sku)}`, { fetch: f });
+					void updateLocalItem(sku, () => item).catch(() => {});
+					return item;
+				},
+				() => localItem(sku)
+			),
 		create: (body: CreateItemRequest) =>
 			request<ItemWithAvailability>('/items', { method: 'POST', body }),
 		update: (sku: string, body: UpdateItemRequest, version?: number) =>
@@ -156,18 +247,26 @@ export const api = {
 			request<ItemWithAvailability>(`/items/${enc(sku)}/restore`, { method: 'POST' }),
 		deletePermanently: (sku: string) =>
 			request<void>(`/items/${enc(sku)}?permanent=true`, { method: 'DELETE' }),
+		/** Offline: empty (history is not kept in the offline copy). */
 		movements: (sku: string, limit = 50, f?: Fetch) =>
-			request<StockMovement[]>(`/items/${enc(sku)}/movements?limit=${limit}`, { fetch: f }),
+			withOffline(
+				() => request<StockMovement[]>(`/items/${enc(sku)}/movements?limit=${limit}`, { fetch: f }),
+				async () => []
+			),
 		addMovement: (sku: string, body: StockMovementRequest) =>
-			request<StockChangeResponse>(`/items/${enc(sku)}/movements`, { method: 'POST', body }),
-		count: (sku: string, body: StockCountRequest) =>
-			request<StockChangeResponse>(`/items/${enc(sku)}/count`, { method: 'POST', body }),
+			stockChange(sku, { kind: 'movement', body }),
+		count: (sku: string, body: StockCountRequest) => stockChange(sku, { kind: 'count', body }),
+		/** Offline: empty. */
 		reservations: (sku: string, f?: Fetch) =>
-			request<ReservationWithProject[]>(`/items/${enc(sku)}/reservations`, { fetch: f })
+			withOffline(
+				() => request<ReservationWithProject[]>(`/items/${enc(sku)}/reservations`, { fetch: f }),
+				async () => []
+			)
 	},
 
 	locations: {
-		list: (f?: Fetch) => request<Location[]>('/locations', { fetch: f }),
+		list: (f?: Fetch) =>
+			withOffline(() => request<Location[]>('/locations', { fetch: f }), localLocations),
 		create: (body: CreateLocationRequest) =>
 			request<Location>('/locations', { method: 'POST', body }),
 		update: (id: number, body: UpdateLocationRequest) =>
@@ -178,9 +277,14 @@ export const api = {
 	projects: {
 		/** `status` filters, e.g. ['planning', 'active']; empty for all. */
 		list: (status: string[] = [], f?: Fetch) =>
-			request<ProjectSummary[]>(
-				status.length ? `/projects?status=${status.join(',')}` : '/projects',
-				{ fetch: f }
+			withOffline(
+				() =>
+					request<ProjectSummary[]>(
+						status.length ? `/projects?status=${status.join(',')}` : '/projects',
+						{ fetch: f }
+					),
+				async () =>
+					(await localProjects()).filter((p) => !status.length || status.includes(p.status))
 			),
 		get: (id: number, f?: Fetch) => request<ProjectSummary>(`/projects/${id}`, { fetch: f }),
 		create: (body: CreateProjectRequest) =>
@@ -227,7 +331,10 @@ export const api = {
 	},
 
 	lookup: (code: string, f?: Fetch) =>
-		request<LookupResult>(`/lookup?code=${enc(code)}`, { fetch: f }),
+		withOffline(
+			() => request<LookupResult>(`/lookup?code=${enc(code)}`, { fetch: f }),
+			() => localLookup(code)
+		),
 
 	labelInfo: (f?: Fetch) =>
 		request<{ baseUrl: string; configured: boolean }>('/labels/info', { fetch: f }),
