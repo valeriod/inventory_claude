@@ -109,3 +109,37 @@ export interface PickLine extends Reservation {
 export interface ReservationWithProject extends Reservation {
 	project: Pick<Project, 'id' | 'name' | 'status'>;
 }
+
+/** How much of an item a project needs (its parts list / bill of materials). */
+export interface ProjectPart {
+	id: number;
+	projectId: number;
+	sku: string;
+	qtyNeeded: number;
+	note: string | null;
+	createdAt: IsoTimestamp;
+	updatedAt: IsoTimestamp;
+}
+
+/**
+ * One item of a project's bill of materials, combining the parts list, reservations and use.
+ * All quantities are base units.
+ */
+export interface BomLine {
+	sku: string;
+	item: PickLine['item'];
+	/** From the parts list; null when the item was only reserved or used. */
+	qtyNeeded: number | null;
+	note: string | null;
+	/** Taken out of stock for the project so far. */
+	qtyUsed: number;
+	/** Open reservation (at most one per project and item). */
+	qtyReserved: number;
+	reservationId: number | null;
+	/** Still to cover: needed − used − reserved (0 without a need). */
+	qtyRemaining: number;
+	/** Part of the remainder that available stock can cover now. */
+	qtyCanReserve: number;
+	/** What must be bought: the uncovered remainder plus reserved stock that is not on hand. */
+	qtyToBuy: number;
+}

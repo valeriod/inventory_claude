@@ -51,3 +51,27 @@ export const updateReservationRequestSchema = z.union([
 	z.strictObject({ status: z.literal('released') })
 ]);
 export type UpdateReservationRequest = z.input<typeof updateReservationRequestSchema>;
+
+/** PUT /api/projects/:id/parts/:sku — set how much of an item the project needs. */
+export const setProjectPartRequestSchema = z.strictObject({
+	qtyNeeded: positiveQty,
+	note
+});
+export type SetProjectPartRequest = z.input<typeof setProjectPartRequestSchema>;
+
+/**
+ * Pure BOM arithmetic, shared by the API and tests. `available` may be negative (over-committed).
+ */
+export function bomQuantities(input: {
+	needed: number | null;
+	used: number;
+	reserved: number;
+	onHand: number;
+	available: number;
+}): { remaining: number; canReserve: number; toBuy: number } {
+	const remaining =
+		input.needed === null ? 0 : Math.max(0, input.needed - input.used - input.reserved);
+	const canReserve = Math.min(remaining, Math.max(0, input.available));
+	const notOnHand = Math.max(0, input.reserved - input.onHand);
+	return { remaining, canReserve, toBuy: remaining - canReserve + notOnHand };
+}

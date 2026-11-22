@@ -52,6 +52,7 @@
 	<a class="btn" href={resolve('/categories/new')}>+ New category</a>
 	<a class="btn" href={resolve('/scan')}>Scan</a>
 	<a class="btn" href={resolve('/scan?mode=receive')}>Receive stock</a>
+	<a class="btn" href={resolve('/reports')}>Reports</a>
 </div>
 
 <section class="card mb-6">

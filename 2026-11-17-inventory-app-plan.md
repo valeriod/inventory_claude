@@ -313,7 +313,9 @@ Reports
   GET    /api/reports/low-stock
   GET    /api/reports/project/:id            (BOM / pick list with shortages)
   GET    /api/reports/movements?from=&to=&sku=
-  GET    /api/reports/valuation              (if unit cost field is added)
+  GET    /api/reports/valuation              (if unit cost field is added; not built)
+  (M7: all reports take ?format=json|csv|pdf&tz=…; project parts lists: GET /api/projects/:id/bom,
+   PUT|DELETE /api/projects/:id/parts/:sku, POST /api/projects/:id/reserve-needed)
 
 Labels
   GET    /api/labels?skus=…&format=pdf       (printable QR labels for items/bins)
@@ -400,11 +402,22 @@ Import / Export
 - **API.** `/api/projects` CRUD (`?status=planning,active`) returns line counts (`openLines`, `shortLines`, `consumedLines`). `GET /api/projects/:id/reservations` is the pick list: every line with the item's name, location, on-hand and available quantity, and `shortBy`. Also `consume-all`, `release-all` and `PATCH /api/reservations/:id`. `GET /api/items/:sku/reservations` includes the project's name and status.
 - **Partial picks.** `PATCH /api/reservations/:id {status:'consumed', qty}` with `qty` smaller than the reservation takes that much out of stock (a `reserve_consume` movement linked to the reservation) and leaves the rest reserved. Consuming more than is reserved is refused; extra use goes through a normal movement.
 - **Use all is all or nothing.** It runs in one transaction: if one line is short, nothing is taken out of stock.
-- **Shortages.** Reservations cannot exceed available stock, so shortages only appear when stock drops afterwards (ad-hoc use, a count). A line is *short* when on hand < reserved (`shortBy` = the difference). Separately, *over-committed* means available < 0, i.e. all projects together reserve more than is on hand. Planning parts you do not have yet ("wanted" quantities) is not modelled; it could be added for the M7 BOM report.
+- **Shortages.** Reservations cannot exceed available stock, so shortages only appear when stock drops afterwards (ad-hoc use, a count). A line is *short* when on hand < reserved (`shortBy` = the difference). Separately, *over-committed* means available < 0, i.e. all projects together reserve more than is on hand. Parts you do not have yet are planned with the parts list added in M7.
 - **Closing projects.** `completed` / `cancelled` is refused while lines are open, so closed projects never hold stock. Reserving archived items is refused. Deleting a project removes its reservations (open ones return to stock) and keeps the movement history.
 - **UI.** `/projects` (Open / Completed / Cancelled / All), `/projects/[id]` (add parts by search, pick / change / release per line, use all, release all, project QR label), "Reserve…" on item pages, active projects on the dashboard. `/p/[id]` redirects to the project.
 - **Scanner pick mode** (`/scan?mode=pick&project=…`, the "Pick with scanner" button): each scan of a reserved part opens the pick sheet; a "Still to pick" list shrinks as parts are taken. Scanning a project label in look-up mode opens the project.
 - **Phone navigation:** Home, Items, Scan, Projects, Locations. Categories are reached from the dashboard (and the top bar on larger screens).
+
+**Implementation notes (M7):**
+
+- **Parts list (decided 2026-11-21).** New table `project_parts` (`project_id`, `sku`, `qty_needed` > 0, `note`; unique per project and item; migration `0002_project_parts`). It records what a project needs whether or not it is in stock; reservations remain the allocation of stock on hand. The bill of materials (`GET /api/projects/:id/bom`) combines both per item: needed, used (`consume` / `reserve_consume` movements of the project), reserved, *can reserve* (the uncovered need that available stock covers) and *to buy* (the need nothing covers, plus reserved stock no longer on hand). `PUT` / `DELETE /api/projects/:id/parts/:sku`; `POST /api/projects/:id/reserve-needed` reserves what it can for every line.
+- **Project page** shows the bill of materials: add a part with its needed quantity (reserving what is in stock), per line Pick / Reserve N / Edit (needed and reserved quantities), plus Reserve available, Use all, Release all and links to the project report and its stock history.
+- **Reports** are built once on the server as typed columns and rows (`Report` in `packages/shared`), then sent as JSON (preview in `/reports`), CSV or PDF: `GET /api/reports/inventory?category&location&includeArchived`, `/low-stock?category&location`, `/project/:id`, `/movements?from&to&sku&reason&project` (ISO timestamps, `to` exclusive; at most 10 000 rows). All take `format=json|csv|pdf` and `tz` (time zone for PDF dates).
+- **Quantities in reports** are plain numbers in each item's display unit with a separate Unit column, so spreadsheets can sum them.
+- **CSV:** UTF-8 with BOM (Excel shows Ω and µ), CRLF, RFC 4180 quoting; text cells starting with `= + - @` get a leading `'` against formula injection.
+- **PDF:** pdfkit A4 table (landscape above 7 columns), header row repeated per page, page numbers, long cells cut with an ellipsis.
+- **Print:** the `/reports` page hides the app chrome and filters when printing.
+- **Not built:** valuation (no cost data yet; see §10).
 
 ### 6.4 Offline behaviour (v1)
 
@@ -467,7 +480,7 @@ The compose files and Caddyfile examples ship in `docker/`. Updating the guide i
 | **M4** ✅ | PWA foundation | SvelteKit SPA, optional password login, layout, dashboard, search, item detail/edit with `DynamicForm`, category field editor |
 | **M5** ✅ | Scanning | `Scanner` component, lookup/adjust/receive flows, QR label PDF generation |
 | **M6** ✅ | Projects & reservations | Project CRUD, reservations with availability checks, pick list, consume/release |
-| **M7** | Reports | Inventory, low-stock, project BOM/shortage, movement history; CSV + PDF + print CSS |
+| **M7** ✅ | Reports | Inventory, low-stock, project BOM/shortage, movement history; CSV + PDF + print CSS |
 | **M8** | PWA polish & offline | Manifest, icons, install prompt, offline catalogue, queued adjustments, update toast |
 | **M9** | Import/export, deploy & hardening | CSV import with dry-run, stocktake flow, more E2E coverage, Docker image, compose/Caddy examples, backup job, `db:transfer`, `docs/DEPLOY.md` verified end-to-end on a clean machine |
 

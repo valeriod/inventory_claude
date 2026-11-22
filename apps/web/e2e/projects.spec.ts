@@ -15,7 +15,7 @@ async function reserve(page: Page, projectId: number, sku: string, qty: number) 
 	expect(res.status()).toBe(201);
 }
 
-test('create a project, reserve, partly pick and release parts', async ({ page }) => {
+test('create a project, add a needed part, partly pick and release it', async ({ page }) => {
 	const name = unique('Amp');
 	await page.goto('/projects');
 	await page.getByRole('button', { name: '+ New project' }).click();
@@ -24,18 +24,19 @@ test('create a project, reserve, partly pick and release parts', async ({ page }
 	await dialog.getByRole('button', { name: 'Create project' }).click();
 	await expect(page.getByRole('heading', { name })).toBeVisible();
 
-	// Add a part by searching for it
+	// Add a part by searching for it; what is in stock is reserved right away
 	await page.getByLabel('Find an item').fill('hookup wire 22AWG black');
 	await page.getByRole('button', { name: /Hookup wire 22AWG black/ }).click();
-	const reserveDialog = page.getByRole('dialog', { name: 'Reserve for a project' });
-	await reserveDialog.getByLabel('Quantity to reserve').fill('2');
-	await reserveDialog.getByRole('button', { name: 'Reserve' }).click();
-	const line = page.getByTestId('reserved-line');
+	const add = page.getByRole('dialog', { name: 'Add to project' });
+	await add.getByLabel('Needed for the project').fill('2');
+	await add.getByRole('button', { name: 'Add' }).click();
+	const line = page.getByTestId('bom-line');
 	await expect(line).toHaveCount(1);
 	await expect(line).toContainText('2 m');
+	await expect(line.getByRole('button', { name: 'Pick' })).toBeVisible();
 
 	// Closing the project is refused while parts are reserved
-	await page.getByRole('button', { name: 'Edit' }).click();
+	await page.getByRole('button', { name: 'Edit', exact: true }).first().click();
 	const edit = page.getByRole('dialog', { name: 'Edit project' });
 	await edit.getByLabel('Status').selectOption('completed');
 	await expect(edit).toContainText('Use or release the 1 reserved part first');
@@ -50,11 +51,35 @@ test('create a project, reserve, partly pick and release parts', async ({ page }
 	await pick.getByRole('button', { name: 'Take from stock' }).click();
 	await expect(line).toContainText('1.5 m');
 
-	await line.getByRole('button', { name: 'Release' }).click();
-	await expect(line).toHaveCount(0);
-	await expect(page.locator('section', { hasText: 'Used and released' })).toContainText(
-		'Released · 1.5 m'
-	);
+	// Release the rest: the need stays on the list and can be reserved again
+	await line.getByRole('button', { name: 'Edit' }).click();
+	const editLine = page.getByRole('dialog', { name: 'Edit part' });
+	await editLine.getByLabel('Reserved from stock').fill('');
+	await editLine.getByRole('button', { name: 'Save' }).click();
+	await expect(line.getByRole('button', { name: 'Pick' })).toHaveCount(0);
+	await expect(line.getByRole('button', { name: /Reserve 1.5 m/ })).toBeVisible();
+});
+
+test('needs beyond stock show what to buy', async ({ page }) => {
+	const id = await createProject(page, unique('Big'));
+	const res = await page.request.put(`/api/projects/${id}/parts/RES-0002`, {
+		data: { qtyNeeded: 100_000 }
+	});
+	expect(res.ok()).toBe(true);
+	await page.goto(`/projects/${id}`);
+	await expect(page.getByTestId('to-buy-count')).toHaveText('1 to buy');
+	await page.getByRole('button', { name: 'Reserve available' }).click();
+	const line = page.getByTestId('bom-line');
+	await expect(line.getByRole('button', { name: 'Pick' })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Reserve available' })).toHaveCount(0);
+	await expect(line).toContainText('To buy');
+	// Release so other tests keep their stock available
+	await page.getByRole('button', { name: 'Release all' }).click();
+	await page
+		.getByRole('dialog', { name: 'Release all reserved parts?' })
+		.getByRole('button', { name: 'Release all' })
+		.click();
+	await expect(line.getByRole('button', { name: 'Pick' })).toHaveCount(0);
 });
 
 test('reserve from an item page', async ({ page }) => {
@@ -70,7 +95,7 @@ test('reserve from an item page', async ({ page }) => {
 	const reservations = page.locator('section', { hasText: 'Reservations' });
 	await expect(reservations.getByRole('link', { name })).toBeVisible();
 	await reservations.getByRole('link', { name }).click();
-	await expect(page.getByTestId('reserved-line')).toContainText('CAP-0001');
+	await expect(page.getByTestId('bom-line')).toContainText('CAP-0001');
 });
 
 test('use all reserved parts at once', async ({ page }) => {
@@ -78,16 +103,14 @@ test('use all reserved parts at once', async ({ page }) => {
 	await reserve(page, id, 'RES-0002', 2);
 	await reserve(page, id, 'CAP-0001', 1);
 	await page.goto(`/projects/${id}`);
-	await expect(page.getByTestId('reserved-line')).toHaveCount(2);
+	await expect(page.getByRole('button', { name: 'Pick' })).toHaveCount(2);
 	await page.getByRole('button', { name: 'Use all' }).click();
 	await page
 		.getByRole('dialog', { name: 'Use all reserved parts?' })
 		.getByRole('button', { name: 'Use all' })
 		.click();
-	await expect(page.getByTestId('reserved-line')).toHaveCount(0);
-	await expect(page.locator('section', { hasText: 'Used and released' })).toContainText(
-		'Used · 2 pcs'
-	);
+	await expect(page.getByRole('button', { name: 'Pick' })).toHaveCount(0);
+	await expect(page.getByTestId('bom-line').filter({ hasText: 'RES-0002' })).toContainText('2 pcs');
 });
 
 test('pick parts for a project with the scanner', async ({ page }) => {

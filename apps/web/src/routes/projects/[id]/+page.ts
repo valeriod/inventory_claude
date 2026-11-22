@@ -6,13 +6,13 @@ export const load: PageLoad = async ({ params, fetch }) => {
 	const id = Number(params.id);
 	if (!Number.isSafeInteger(id) || id <= 0) error(404, 'Project not found');
 	try {
-		const [project, lines, categories, locations] = await Promise.all([
+		const [project, bom, categories, locations] = await Promise.all([
 			api.projects.get(id, fetch),
-			api.projects.lines(id, fetch),
+			api.projects.bom(id, fetch),
 			api.categories.list(fetch),
 			api.locations.list(fetch)
 		]);
-		return { project, lines, categories, locations };
+		return { project, bom, categories, locations };
 	} catch (err) {
 		if (err instanceof ApiError && err.status === 404) error(404, 'Project not found');
 		throw err;
