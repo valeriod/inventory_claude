@@ -3,6 +3,8 @@ export interface ApiErrorBody {
 	error: {
 		code:
 			| 'bad_request'
+			| 'unauthorized'
+			| 'too_many_requests'
 			| 'validation'
 			| 'not_found'
 			| 'conflict'

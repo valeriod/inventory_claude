@@ -4,7 +4,6 @@
 	"private": true,
 	"type": "module",
 	"imports": {
-		"#lib": "./src/lib/index.js",
 		"#lib/*": "./src/lib/*"
 	},
 	"scripts": {
@@ -12,12 +11,15 @@
 		"build": "vite build",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
-		"typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings"
+		"typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
+		"test": "vitest run",
+		"test:e2e": "playwright test"
 	},
 	"dependencies": {
 		"@inventory/shared": "workspace:*"
 	},
 	"devDependencies": {
+		"@playwright/test": "1.65.1",
 		"@sveltejs/adapter-static": "^4.0.1",
 		"@sveltejs/kit": "^3.4.0",
 		"@sveltejs/vite-plugin-svelte": "^7.3.1",
@@ -27,6 +29,7 @@
 		"tailwindcss": "^4.3.5",
 		"typescript": "~6.0.3",
 		"vite": "^8.3.8",
-		"vite-plugin-mkcert": "^2.1.0"
+		"vite-plugin-mkcert": "^2.1.0",
+		"vitest": "^5.1.1"
 	}
 }

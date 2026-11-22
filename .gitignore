@@ -30,3 +30,6 @@ certs/
 # Test artifacts
 playwright-report/
 test-results/
+
+# Playwright login state
+apps/web/e2e/.auth/

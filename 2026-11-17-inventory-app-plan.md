@@ -373,8 +373,16 @@ Import / Export
 
 ### 6.3 State & data
 
-- Svelte 5 runes + small stores; TanStack Query (`@tanstack/svelte-query`) for fetching, caching, and invalidation.
-- Typed API client generated from the shared Zod schemas.
+- Svelte 5 runes. Data is loaded in SvelteKit `load` functions and refreshed with `invalidateAll()` after mutations. TanStack Query was dropped in M4, because `load` covers this app's needs without another dependency.
+- Typed API client (`apps/web/src/lib/api.ts`) using the request/response types and Zod schemas from `packages/shared`.
+
+**Implementation notes (M4):**
+
+- **Item list state is in the URL.** Filter, sort and page are query parameters that pass straight through to `GET /api/items`, so filtered views can be bookmarked and shared.
+- **Attribute forms reuse the API's validation.** They convert values to and from editable text (quantities as `4.7k`) and validate with the same `buildAttributesSchema` the API uses, so errors appear before saving. Server errors map back to the field they belong to.
+- **Field editor.** Saved keys are read-only; renaming is a separate action that moves stored values. Removing saved fields asks for confirmation. Changes that would invalidate items show the affected SKUs as links.
+- **Login.** It sets a stateless signed cookie (`HttpOnly`, `SameSite=Strict`, `Secure` behind HTTPS), valid 180 days. The signing key is derived from `SESSION_SECRET` and `APP_PASSWORD`, so changing the password logs out every device. Failed logins are rate-limited to 10 per 15 minutes.
+- **End-to-end tests.** Playwright runs the production build with demo data and a password, on a desktop and a phone viewport, locally and in CI.
 
 ### 6.4 Offline behaviour (v1)
 
@@ -434,12 +442,12 @@ The compose files and Caddyfile examples ship in `docker/`. Updating the guide i
 | **M1** ✅ | Data layer | Kysely setup, `DialectAdapter`, migrations for all tables, repositories (including the transactional stock-movement and reservation logic), seed data (`pnpm db:seed`: sample categories Resistors, Capacitors, ICs, Wire, Tools) |
 | **M2** ✅ | Categories, dynamic fields & units | Field-def schema, runtime Zod builder, inheritance, `units.ts` (base-unit conversion), category CRUD API + tests |
 | **M3** ✅ | Items & stock | Item and stock HTTP API on top of the M1 repositories, attribute validation against resolved field definitions, `searchable` flag, search and JSON-filter query parameters |
-| **M4** | PWA foundation | SvelteKit SPA, optional password login, layout, dashboard, search, item detail/edit with `DynamicForm`, category field editor |
+| **M4** ✅ | PWA foundation | SvelteKit SPA, optional password login, layout, dashboard, search, item detail/edit with `DynamicForm`, category field editor |
 | **M5** | Scanning | `Scanner` component, lookup/adjust/receive flows, QR label PDF generation |
 | **M6** | Projects & reservations | Project CRUD, reservations with availability checks, pick list, consume/release |
 | **M7** | Reports | Inventory, low-stock, project BOM/shortage, movement history; CSV + PDF + print CSS |
 | **M8** | PWA polish & offline | Manifest, icons, install prompt, offline catalogue, queued adjustments, update toast |
-| **M9** | Import/export, deploy & hardening | CSV import with dry-run, stocktake flow, E2E tests on mobile viewports, Docker image, compose/Caddy examples, backup job, `db:transfer`, `docs/DEPLOY.md` verified end-to-end on a clean machine |
+| **M9** | Import/export, deploy & hardening | CSV import with dry-run, stocktake flow, more E2E coverage, Docker image, compose/Caddy examples, backup job, `db:transfer`, `docs/DEPLOY.md` verified end-to-end on a clean machine |
 
 M1–M3 (backend) and M4 (PWA shell against a mock API) can proceed in parallel once the shared schemas from M2 are stable.
 
