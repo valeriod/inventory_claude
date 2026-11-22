@@ -6,7 +6,9 @@ import { createRepositories, type DatabaseConnection } from '@inventory/db';
 import { UNITS, type HealthResponse } from '@inventory/shared';
 import { createAuth, type AuthConfig } from './auth.ts';
 import { handleError, notFound } from './http/errors.ts';
+import { apiBodyLimit, securityHeaders } from './http/security.ts';
 import { categoryRoutes } from './routes/categories.ts';
+import { dataRoutes } from './routes/data.ts';
 import { itemRoutes } from './routes/items.ts';
 import { labelRoutes } from './routes/labels.ts';
 import { locationRoutes } from './routes/locations.ts';
@@ -23,14 +25,24 @@ export interface AppOptions {
 	auth?: AuthConfig;
 	/** Base URL encoded in printed QR labels (PUBLIC_URL); defaults to the request origin. */
 	publicUrl?: string | undefined;
+	/** Nightly backup settings, shown in Settings. */
+	backup?: { dir: string; keep: number; hour: number } | undefined;
 }
 
-export function createApp({ conn, staticDir, auth: authConfig, publicUrl }: AppOptions): Hono {
+export function createApp({
+	conn,
+	staticDir,
+	auth: authConfig,
+	publicUrl,
+	backup
+}: AppOptions): Hono {
 	const repos = createRepositories(conn);
 	const auth = createAuth(authConfig ?? { password: undefined, sessionSecret: undefined });
 	const app = new Hono();
 	const api = new Hono();
 
+	app.use('*', securityHeaders);
+	api.use('*', apiBodyLimit);
 	api.use('*', auth.middleware);
 	api.route('/auth', auth.routes);
 
@@ -45,6 +57,7 @@ export function createApp({ conn, staticDir, auth: authConfig, publicUrl }: AppO
 	api.route('/reservations', reservationRoutes(repos));
 	api.route('/reports', reportRoutes(repos));
 	api.route('/lookup', lookupRoutes(repos));
+	api.route('/', dataRoutes(repos, conn, { backup, publicUrl }));
 	api.route('/labels', labelRoutes(repos, { publicUrl }));
 
 	api.all('*', notFound);

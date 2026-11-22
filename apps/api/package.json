@@ -9,6 +9,8 @@
 		"start": "STATIC_DIR=${STATIC_DIR:-../web/build} node --env-file-if-exists=../../.env dist/server.js",
 		"db:migrate": "tsx --env-file-if-exists=../../.env src/migrate.ts",
 		"db:seed": "tsx --env-file-if-exists=../../.env src/seed.ts",
+		"db:transfer": "tsx --env-file-if-exists=../../.env src/cli.ts transfer",
+		"db:backup": "tsx --env-file-if-exists=../../.env src/cli.ts backup",
 		"typecheck": "tsc -p tsconfig.json",
 		"test": "vitest run"
 	},

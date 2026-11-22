@@ -7,3 +7,11 @@ export type { Database } from './schema.ts';
 export { buildSearchText, queryTokens, tokenize } from './search.ts';
 export { seedDemoData } from './seed.ts';
 export { parseDatabaseUrl, type DatabaseTarget } from './url.ts';
+export {
+	assertDump,
+	dumpDatabase,
+	restoreDatabase,
+	vacuumInto,
+	type Dump,
+	DUMP_FORMAT
+} from './transfer.ts';

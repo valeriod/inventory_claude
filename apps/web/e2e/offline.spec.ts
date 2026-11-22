@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { navTo } from './helpers.ts';
+import { navTo, withoutCamera } from './helpers.ts';
 
 async function qtyOnHand(page: Page, sku: string): Promise<number> {
 	const res = await page.request.get(`/api/items/${sku}`);
@@ -10,6 +10,7 @@ test('the app works offline and sends queued stock changes once it is back', asy
 	page,
 	context
 }) => {
+	await withoutCamera(page); // the scan step below types a code
 	const sku = 'RES-0002';
 	const before = await qtyOnHand(page, sku);
 

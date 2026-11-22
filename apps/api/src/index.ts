@@ -1,6 +1,7 @@
 import { serve } from '@hono/node-server';
 import { connect, migrateToLatest } from '@inventory/db';
 import { createApp } from './app.ts';
+import { scheduleBackups } from './backup.ts';
 import { ConfigError, loadConfig } from './config.ts';
 import { VERSION } from './version.ts';
 
@@ -15,7 +16,12 @@ async function main(): Promise<void> {
 		conn,
 		staticDir: config.staticDir,
 		publicUrl: config.publicUrl,
-		auth: { password: config.appPassword, sessionSecret: config.sessionSecret }
+		backup: config.backup,
+		auth: {
+			password: config.appPassword,
+			sessionSecret: config.sessionSecret,
+			trustProxy: config.trustProxy
+		}
 	});
 	const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {
 		console.log(
@@ -26,7 +32,10 @@ async function main(): Promise<void> {
 		);
 	});
 
+	const stopBackups = config.backup ? scheduleBackups(conn, config.backup) : () => {};
+
 	const shutdown = (signal: string) => {
+		stopBackups();
 		console.log(`${signal} received, shutting down`);
 		server.close(() => {
 			void conn.close().then(() => process.exit(0));

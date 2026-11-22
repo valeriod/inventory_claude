@@ -43,18 +43,26 @@ export class ApiError extends Error {
 export interface RequestOptions {
 	method?: string;
 	body?: unknown;
+	/** Raw text body (e.g. CSV), sent as is with `contentType`. */
+	text?: string;
+	contentType?: string;
 	headers?: Record<string, string>;
 	fetch?: Fetch;
 }
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-	const { method = 'GET', body, headers = {}, fetch: f = fetch } = options;
+	const { method = 'GET', body, text, contentType, headers = {}, fetch: f = fetch } = options;
 	let res: Response;
 	try {
 		res = await f(`/api${path}`, {
 			method,
-			headers: body === undefined ? headers : { 'content-type': 'application/json', ...headers },
-			body: body === undefined ? undefined : JSON.stringify(body)
+			headers:
+				text !== undefined
+					? { 'content-type': contentType ?? 'text/plain', ...headers }
+					: body === undefined
+						? headers
+						: { 'content-type': 'application/json', ...headers },
+			body: text ?? (body === undefined ? undefined : JSON.stringify(body))
 		});
 	} catch {
 		reportReachable(false);

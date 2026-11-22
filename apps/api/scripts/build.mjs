@@ -1,4 +1,5 @@
-// Bundles the API (including the TypeScript workspace packages) into dist/server.js.
+// Bundles the API and the maintenance CLI (including the TypeScript workspace packages) into
+// dist/server.js and dist/cli.js.
 // Packages listed in package.json "runtimeDependencies" stay external (better-sqlite3 is native,
 // pdfkit reads font data files from disk); the Docker image installs them next to dist/.
 import { readFileSync } from 'node:fs';
@@ -8,8 +9,8 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 const version = process.env.APP_VERSION ?? pkg.version;
 
 await build({
-	entryPoints: ['src/index.ts'],
-	outfile: 'dist/server.js',
+	entryPoints: { server: 'src/index.ts', cli: 'src/cli.ts' },
+	outdir: 'dist',
 	bundle: true,
 	platform: 'node',
 	format: 'esm',

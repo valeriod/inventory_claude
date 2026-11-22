@@ -96,6 +96,55 @@ jobs:
       - if: always()
         run: docker logs inv || true
 
+  compose:
+    name: Compose deployments (Caddy HTTPS, Postgres, backups, transfer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: SQLite behind Caddy (internal CA), with a password
+        run: |
+          cat > .env <<'ENV'
+          CADDYFILE=Caddyfile.lan
+          SITE_ADDRESS=localhost
+          APP_PASSWORD=ci-password
+          SESSION_SECRET=ci-session-secret-0123456789abcdef
+          ENV
+          docker compose --env-file .env -f docker/compose.yml -f docker/compose.caddy.yml up -d --build --wait
+          for i in $(seq 1 30); do curl -kfsS https://localhost/api/health && break; sleep 1; done
+          curl -kfsS https://localhost/api/health | grep '"database":"sqlite"'
+          # The app is not published on the host; only Caddy is.
+          if curl -fsS localhost:3000/api/health; then echo "app port should not be published"; exit 1; fi
+          # Security headers and HTML shell through the proxy
+          curl -ksSI https://localhost/items | grep -i '^content-security-policy:'
+          # Password login over HTTPS sets a Secure cookie
+          test "$(curl -ks -o /dev/null -w '%{http_code}' https://localhost/api/units)" = 401
+          curl -ksS -c jar -H 'content-type: application/json' -d '{"password":"ci-password"}' \
+            https://localhost/api/auth/login -D - | grep -i 'set-cookie:.*secure'
+          curl -kfsS -b jar https://localhost/api/units > /dev/null
+          # Backups via the CLI land in ./data/backups
+          docker compose --env-file .env -f docker/compose.yml -f docker/compose.caddy.yml exec -T -u node app node dist/cli.js backup
+          ls data/backups | grep -E '^inventory-[0-9]{8}-[0-9]{6}\.db$'
+      - if: always()
+        run: docker compose --env-file .env -f docker/compose.yml -f docker/compose.caddy.yml logs || true
+      - name: Postgres variant, export and transfer
+        run: |
+          docker compose --env-file .env -f docker/compose.yml -f docker/compose.caddy.yml down
+          sudo rm -rf data
+          export POSTGRES_PASSWORD=ci-postgres
+          docker compose -f docker/compose.yml -f docker/compose.postgres.yml up -d --build --wait
+          for i in $(seq 1 30); do curl -fsS localhost:3000/api/health && break; sleep 1; done
+          curl -fsS localhost:3000/api/health | grep '"database":"postgres"'
+          curl -fsS -X POST -H 'content-type: application/json' \
+            -d '{"name":"CI bin","code":"CI-1"}' localhost:3000/api/locations
+          # Postgres → JSON → fresh SQLite, inside the container
+          docker compose -f docker/compose.yml -f docker/compose.postgres.yml exec -T -u node app sh -c \
+            'node dist/cli.js transfer --from "$DATABASE_URL" --to /data/export.json.gz &&
+             node dist/cli.js transfer --from /data/export.json.gz --to sqlite:///data/copy.db'
+          docker compose -f docker/compose.yml -f docker/compose.postgres.yml exec -T -u node app node dist/cli.js backup
+          ls data/backups | grep -E '^inventory-[0-9]{8}-[0-9]{6}\.json\.gz$'
+      - if: always()
+        run: docker compose -f docker/compose.yml -f docker/compose.postgres.yml logs || true
+
   e2e:
     name: End-to-end (Playwright)
     runs-on: ubuntu-latest

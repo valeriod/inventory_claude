@@ -100,6 +100,23 @@ describe('auth enabled', () => {
 		expect(((await blocked.json()) as ApiErrorBody).error.code).toBe('too_many_requests');
 	});
 
+	it('behind a trusted proxy, rate-limits per forwarded client address', async () => {
+		const conn = connect('sqlite::memory:');
+		const app = createApp({
+			conn,
+			auth: { password: 'hunter2', sessionSecret: SECRET, trustProxy: true }
+		});
+		const login = (pw: string, ip: string) =>
+			app.request('/api/auth/login', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json', 'x-forwarded-for': `spoofed, ${ip}` },
+				body: JSON.stringify({ password: pw })
+			});
+		for (let i = 0; i < 10; i++) await login('nope', '203.0.113.9');
+		expect((await login('hunter2', '203.0.113.9')).status).toBe(429);
+		expect((await login('hunter2', '192.168.1.20')).status).toBe(200);
+	});
+
 	it('logs out by clearing the cookie', async () => {
 		const { app } = setup('hunter2');
 		const res = await app.request('/api/auth/logout', { method: 'POST' });

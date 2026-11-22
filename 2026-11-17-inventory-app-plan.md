@@ -321,8 +321,10 @@ Labels
   GET    /api/labels?skus=…&format=pdf       (printable QR labels for items/bins)
 
 Import / Export
-  POST   /api/import/csv?category=…          (dry-run + commit)
+  POST   /api/import/items?category=&updateStock=&commit=   (CSV body; check, then commit)
+  GET    /api/import/template?category=…
   GET    /api/export?format=csv|json
+  GET    /api/system                         (version, database, backup status)
 ```
 
 **Concurrency rules**
@@ -466,7 +468,8 @@ There is one artifact: a **single Docker image** in which the API serves the bui
 | `SESSION_SECRET` | random 32+ bytes | Required when `APP_PASSWORD` is set |
 | `PORT` / `HOST` | `3000` / `0.0.0.0` | |
 | `PUBLIC_URL` | `https://inventory.example.com` | Encoded in QR labels; **choose it before printing labels** |
-| `BACKUP_DIR` | `/data/backups` | Destination for nightly SQLite backups |
+| `BACKUP_DIR` | `/data/backups` | Destination for nightly backups (SQLite `.db`, Postgres `.json.gz`) |
+| `TRUST_PROXY` | `true` behind Caddy | Client address from `X-Forwarded-For` for the login rate limit |
 
 ### 8.2 Deploy instructions (deliverable: `docs/DEPLOY.md`)
 
@@ -485,6 +488,20 @@ Camera scanning requires **HTTPS** on the phone, so every option below ends with
 
 The compose files and Caddyfile examples ship in `docker/`. Updating the guide is part of the definition of done for any change that touches config.
 
+**Implementation notes (M9):**
+
+- **Export / transfer.** `dumpDatabase` / `restoreDatabase` (`packages/db/src/transfer.ts`) copy every table as stored: ids, timestamps and history, in foreign-key order with parents first. Postgres identity sequences are moved past the copied ids. A restore only goes into an empty, migrated database. The dump is also Settings → "Export everything (JSON)" and `GET /api/export`. `db:transfer --from/--to` accepts database URLs and `.json`/`.json.gz` files; the CLI is bundled as `dist/cli.js` in the image. CI copies SQLite → Postgres → SQLite and compares, and does Postgres → JSON → SQLite inside the container.
+- **Backups.** These are built into the server; no cron container is needed. With `BACKUP_DIR` set (the image sets `/data/backups`), it writes a nightly backup at `BACKUP_HOUR` and keeps `BACKUP_KEEP`. SQLite uses `VACUUM INTO` (a ready-to-use `.db` file); Postgres uses a gzipped JSON dump instead of `pg_dump`, so restores need no Postgres client tools. `cli.js backup` writes one now. Settings shows the latest backup.
+- **CSV import / export.** `GET /api/export?format=csv` writes one row per item: SKU, Name, Description, Category path, Location code, Barcode, On hand, Unit, Min, then custom fields by label (by key where labels clash). `POST /api/import/items` reads the same columns: existing SKUs are updated, others created. Custom-field text is parsed by type (`4k7`, yes/no, enum options case-insensitive, multi-select separated by `;`), and `,`/`;`/tab delimiters are detected. Every request is a full check; with `commit=true` the changes are written in one transaction only if no row has errors (otherwise 422). Stock of existing items changes only with `updateStock=true`, recorded as `count` movements. There is also a header template per category, a 10 MB / 5000-row limit, and a `/import` page that checks and then imports.
+- **Stocktake** is a fourth scanner mode: scan a bin label, then items. Each item opens the count sheet; a checklist shows the bin's items (counted ✓ or expected quantity); items found in the wrong bin can be moved with "Move to bin". Uncounted items are left unchanged. Counts made offline are queued like any stock change.
+- **Settings page** (`/settings`): exports, import, backup status, QR label address, version and database.
+- **Hardening:**
+  - security headers on every response, and a CSP on HTML only (a CSP on PDF responses breaks browser viewers);
+  - API bodies limited to 1 MB (import 10 MB);
+  - `TRUST_PROXY` so the login rate limit counts per client behind Caddy or `tailscale serve`;
+  - the container fixes `/data` ownership and then drops to the `node` user.
+- **Deployment:** `docker/compose.caddy.yml` with `Caddyfile.public` (Let's Encrypt) or `Caddyfile.lan` (internal CA), plus `docs/DEPLOY.md`. A CI job brings up both: SQLite behind Caddy over HTTPS with a password and a backup, and Postgres with export and transfer. "Verified on a clean machine" is covered by that job on a fresh GitHub runner; the Tailscale steps can't be automated there.
+
 ## 9. Milestones
 
 | # | Milestone | Deliverables |
@@ -498,7 +515,7 @@ The compose files and Caddyfile examples ship in `docker/`. Updating the guide i
 | **M6** ✅ | Projects & reservations | Project CRUD, reservations with availability checks, pick list, consume/release |
 | **M7** ✅ | Reports | Inventory, low-stock, project BOM/shortage, movement history; CSV + PDF + print CSS |
 | **M8** ✅ | PWA polish & offline | Manifest, icons, install prompt, offline catalogue, queued adjustments, update toast |
-| **M9** | Import/export, deploy & hardening | CSV import with dry-run, stocktake flow, more E2E coverage, Docker image, compose/Caddy examples, backup job, `db:transfer`, `docs/DEPLOY.md` verified end-to-end on a clean machine |
+| **M9** ✅ | Import/export, deploy & hardening | CSV import with dry-run, stocktake flow, more E2E coverage, Docker image, compose/Caddy examples, backup job, `db:transfer`, `docs/DEPLOY.md` verified end-to-end on a clean machine |
 
 M1–M3 (backend) and M4 (PWA shell against a mock API) can proceed in parallel once the shared schemas from M2 are stable.
 
