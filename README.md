@@ -1,3 +1,5 @@
+Read the [wiki](https://github.com/valeriod/agentic-ai/wiki) to learn why I did this
+
 # Inventory
 
 Inventory system for electronic components, wire, tools and other items. It uses user-defined
