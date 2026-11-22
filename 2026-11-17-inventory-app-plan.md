@@ -351,7 +351,7 @@ Import / Export
 - **Formats.** QR, Data Matrix, EAN-13/8, UPC-A/E, Code 128, Code 39. Parsing ECIA Data Matrix bag labels is still a stretch goal.
 - **Repeat suppression.** A code is ignored while it stays in view (2.5 s after it was last seen), and the timer restarts when the scanner resumes after a dialog, so a label left under the camera does not reopen the dialog.
 - **`/scan` modes:** look up (item page or bin contents), adjust (± sheet), receive (receive sheet; unknown barcodes open "new item" with the barcode filled in). A text field accepts typed codes and USB/Bluetooth barcode scanners, which type like a keyboard. Flows 4 (pick for project) and 5 (stocktake) come with M6 and M9.
-- **Labels.** `GET /api/labels?skus=…&locations=…&layout=…&skip=…&outline=…` renders vector QR codes with pdfkit. Layouts: A4 3×8 (70×37 mm), A4 5×13 (Avery L7651), Letter 3×10 (Avery 5160), and 62×29 / 50×25 mm label rolls. `skip` reuses partly used sheets. At most 300 labels per request. QR codes use `PUBLIC_URL`, or the request origin when it is unset (the print dialog warns). The built-in PDF fonts only cover Windows-1252, so `Ω` prints as "Ohm".
+- **Labels.** `GET /api/labels?skus=…&locations=…&projects=…&layout=…&skip=…&outline=…` renders vector QR codes with pdfkit. Layouts: A4 3×8 (70×37 mm), A4 5×13 (Avery L7651), Letter 3×10 (Avery 5160), and 62×29 / 50×25 mm label rolls. `skip` reuses partly used sheets. At most 300 labels per request. QR codes use `PUBLIC_URL`, or the request origin when it is unset (the print dialog warns). The built-in PDF fonts only cover Windows-1252, so `Ω` prints as "Ohm".
 - **Printing from the UI:** "Print label" on an item, a selection on the items list, and per location (with everything inside it) or all locations.
 - **Packaging.** pdfkit loads font data from disk, so it is not bundled. `apps/api/package.json` `runtimeDependencies` lists the packages the build leaves external and the Docker image installs (better-sqlite3, pdfkit).
 - **E2E.** Chromium's fake camera plays a generated Y4M video of a QR label, so the tests exercise the real camera → decoder → lookup path with both engines.
@@ -394,6 +394,17 @@ Import / Export
 - **Field editor.** Saved keys are read-only; renaming is a separate action that moves stored values. Removing saved fields asks for confirmation. Changes that would invalidate items show the affected SKUs as links.
 - **Login.** It sets a stateless signed cookie (`HttpOnly`, `SameSite=Strict`, `Secure` behind HTTPS), valid 180 days. The signing key is derived from `SESSION_SECRET` and `APP_PASSWORD`, so changing the password logs out every device. Failed logins are rate-limited to 10 per 15 minutes.
 - **End-to-end tests.** Playwright runs the production build with demo data and a password, on a desktop and a phone viewport, locally and in CI.
+
+**Implementation notes (M6):**
+
+- **API.** `/api/projects` CRUD (`?status=planning,active`) returns line counts (`openLines`, `shortLines`, `consumedLines`). `GET /api/projects/:id/reservations` is the pick list: every line with the item's name, location, on-hand and available quantity, and `shortBy`. Also `consume-all`, `release-all` and `PATCH /api/reservations/:id`. `GET /api/items/:sku/reservations` includes the project's name and status.
+- **Partial picks.** `PATCH /api/reservations/:id {status:'consumed', qty}` with `qty` smaller than the reservation takes that much out of stock (a `reserve_consume` movement linked to the reservation) and leaves the rest reserved. Consuming more than is reserved is refused; extra use goes through a normal movement.
+- **Use all is all or nothing.** It runs in one transaction: if one line is short, nothing is taken out of stock.
+- **Shortages.** Reservations cannot exceed available stock, so shortages only appear when stock drops afterwards (ad-hoc use, a count). A line is *short* when on hand < reserved (`shortBy` = the difference). Separately, *over-committed* means available < 0, i.e. all projects together reserve more than is on hand. Planning parts you do not have yet ("wanted" quantities) is not modelled; it could be added for the M7 BOM report.
+- **Closing projects.** `completed` / `cancelled` is refused while lines are open, so closed projects never hold stock. Reserving archived items is refused. Deleting a project removes its reservations (open ones return to stock) and keeps the movement history.
+- **UI.** `/projects` (Open / Completed / Cancelled / All), `/projects/[id]` (add parts by search, pick / change / release per line, use all, release all, project QR label), "Reserve…" on item pages, active projects on the dashboard. `/p/[id]` redirects to the project.
+- **Scanner pick mode** (`/scan?mode=pick&project=…`, the "Pick with scanner" button): each scan of a reserved part opens the pick sheet; a "Still to pick" list shrinks as parts are taken. Scanning a project label in look-up mode opens the project.
+- **Phone navigation:** Home, Items, Scan, Projects, Locations. Categories are reached from the dashboard (and the top bar on larger screens).
 
 ### 6.4 Offline behaviour (v1)
 
@@ -455,7 +466,7 @@ The compose files and Caddyfile examples ship in `docker/`. Updating the guide i
 | **M3** ✅ | Items & stock | Item and stock HTTP API on top of the M1 repositories, attribute validation against resolved field definitions, `searchable` flag, search and JSON-filter query parameters |
 | **M4** ✅ | PWA foundation | SvelteKit SPA, optional password login, layout, dashboard, search, item detail/edit with `DynamicForm`, category field editor |
 | **M5** ✅ | Scanning | `Scanner` component, lookup/adjust/receive flows, QR label PDF generation |
-| **M6** | Projects & reservations | Project CRUD, reservations with availability checks, pick list, consume/release |
+| **M6** ✅ | Projects & reservations | Project CRUD, reservations with availability checks, pick list, consume/release |
 | **M7** | Reports | Inventory, low-stock, project BOM/shortage, movement history; CSV + PDF + print CSS |
 | **M8** | PWA polish & offline | Manifest, icons, install prompt, offline catalogue, queued adjustments, update toast |
 | **M9** | Import/export, deploy & hardening | CSV import with dry-run, stocktake flow, more E2E coverage, Docker image, compose/Caddy examples, backup job, `db:transfer`, `docs/DEPLOY.md` verified end-to-end on a clean machine |

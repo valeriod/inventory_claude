@@ -12,13 +12,16 @@
 	let {
 		open = $bindable(false),
 		skus = [],
-		locations = []
+		locations = [],
+		projects = []
 	}: {
 		open: boolean;
 		/** Item SKUs to print. */
 		skus?: string[];
 		/** Location codes to print. */
 		locations?: string[];
+		/** Project ids to print. */
+		projects?: number[];
 	} = $props();
 
 	const LAYOUT_KEY = 'inventory.labels.layout';
@@ -40,7 +43,7 @@
 
 	const layout = $derived(labelLayout(layoutId)!);
 	const perPage = $derived(labelsPerPage(layout));
-	const count = $derived(skus.length + locations.length);
+	const count = $derived(skus.length + locations.length + projects.length);
 	const pages = $derived(Math.ceil((count + (perPage > 1 ? skip : 0)) / perPage));
 
 	$effect(() => {
@@ -62,7 +65,14 @@
 			// ignore
 		}
 		window.open(
-			api.labelsUrl({ skus, locations, layout: layoutId, skip: perPage > 1 ? skip : 0, outline }),
+			api.labelsUrl({
+				skus,
+				locations,
+				projects,
+				layout: layoutId,
+				skip: perPage > 1 ? skip : 0,
+				outline
+			}),
 			'_blank',
 			'noopener'
 		);

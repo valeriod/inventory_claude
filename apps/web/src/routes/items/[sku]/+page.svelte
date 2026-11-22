@@ -4,6 +4,7 @@
 	import { api } from '#lib/api.js';
 	import ErrorAlert from '#lib/components/ErrorAlert.svelte';
 	import LabelDialog from '#lib/components/LabelDialog.svelte';
+	import ReserveDialog from '#lib/components/ReserveDialog.svelte';
 	import Modal from '#lib/components/Modal.svelte';
 	import StockDialog, { type StockMode } from '#lib/components/StockDialog.svelte';
 	import { formatAttribute, formatDateTime, formatQty, REASON_LABELS } from '#lib/format.js';
@@ -16,6 +17,8 @@
 	let stockMode = $state<StockMode>('receive');
 	let confirmDelete = $state(false);
 	let labelOpen = $state(false);
+	let reserveOpen = $state(false);
+	const openReservations = $derived(data.reservations.filter((r) => r.status === 'reserved'));
 	let error = $state<unknown>(null);
 
 	const item = $derived(data.item);
@@ -196,14 +199,21 @@
 	</section>
 
 	<section class="card" aria-labelledby="reservations-heading">
-		<h2 id="reservations-heading" class="mb-3 font-semibold">Reservations</h2>
-		{#if data.reservations.length === 0}
+		<div class="mb-3 flex items-center justify-between gap-2">
+			<h2 id="reservations-heading" class="font-semibold">Reservations</h2>
+			{#if !item.archivedAt}
+				<button class="btn btn-sm" onclick={() => (reserveOpen = true)}>Reserve…</button>
+			{/if}
+		</div>
+		{#if openReservations.length === 0}
 			<p class="text-sm text-slate-500">Not reserved for any project.</p>
 		{:else}
 			<ul class="space-y-1 text-sm">
-				{#each data.reservations as r (r.id)}
+				{#each openReservations as r (r.id)}
 					<li class="flex justify-between gap-2">
-						<span>Project #{r.projectId} <span class="badge">{r.status}</span></span>
+						<a class="link" href={resolve('/projects/[id]', { id: String(r.project.id) })}>
+							{r.project.name}
+						</a>
 						<span>{formatQty(r.qtyReserved, category)}</span>
 					</li>
 				{/each}
@@ -211,6 +221,14 @@
 		{/if}
 	</section>
 </div>
+
+<ReserveDialog
+	bind:open={reserveOpen}
+	{item}
+	{category}
+	projects={data.openProjects}
+	ondone={() => invalidateAll()}
+/>
 
 <StockDialog
 	bind:open={stockOpen}

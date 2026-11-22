@@ -120,11 +120,30 @@ const codeList = z
 		})
 	);
 
-/** Query of GET /api/labels: comma-separated SKUs and location codes. */
+const idList = z
+	.string()
+	.optional()
+	.transform((v) => [
+		...new Set(
+			(v ?? '')
+				.split(',')
+				.map((s) => s.trim())
+				.filter(Boolean)
+		)
+	])
+	.pipe(
+		z
+			.array(z.string().regex(/^[1-9]\d{0,15}$/, 'Invalid project id'))
+			.max(MAX_LABELS)
+			.transform((ids) => ids.map(Number))
+	);
+
+/** Query of GET /api/labels: comma-separated SKUs, location codes and project ids. */
 export const labelsQuerySchema = z
 	.object({
 		skus: codeList,
 		locations: codeList,
+		projects: idList,
 		layout: z
 			.string()
 			.default(DEFAULT_LABEL_LAYOUT)
@@ -137,11 +156,11 @@ export const labelsQuerySchema = z
 			.default('false')
 			.transform((v) => v === 'true' || v === '1')
 	})
-	.refine((q) => q.skus.length + q.locations.length > 0, {
-		message: 'Give at least one SKU or location code',
+	.refine((q) => q.skus.length + q.locations.length + q.projects.length > 0, {
+		message: 'Give at least one SKU, location code or project',
 		path: ['skus']
 	})
-	.refine((q) => q.skus.length + q.locations.length <= MAX_LABELS, {
+	.refine((q) => q.skus.length + q.locations.length + q.projects.length <= MAX_LABELS, {
 		message: `At most ${MAX_LABELS} labels per request`,
 		path: ['skus']
 	});

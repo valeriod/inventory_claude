@@ -30,6 +30,13 @@ describe('GET /api/labels', () => {
 		expect(pdf).toMatch(/\/Count 3\b/);
 	});
 
+	it('renders project labels', async () => {
+		const project = await api().repos.projects.create({ name: 'Bench PSU' });
+		const res = await api().send('GET', `/api/labels?projects=${project.id}`);
+		expect(res.status).toBe(200);
+		expect((await api().send('GET', '/api/labels?projects=9999')).status).toBe(404);
+	});
+
 	it('reports unknown codes', async () => {
 		const res = await api().send('GET', '/api/labels?skus=RES-0001,NOPE-1&locations=ZZ');
 		expect(res.status).toBe(404);

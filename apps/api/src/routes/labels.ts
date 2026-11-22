@@ -65,6 +65,19 @@ export function labelRoutes(repos: Repositories, options: LabelOptions = {}): Ho
 				footer: location.description ?? undefined
 			});
 		}
+		for (const id of query.projects) {
+			const project = await repos.projects.find(id);
+			if (!project) {
+				missing.push(`project ${id}`);
+				continue;
+			}
+			labels.push({
+				url: `${base}/p/${project.id}`,
+				title: `Project ${project.id}`,
+				name: project.name,
+				footer: project.description ?? undefined
+			});
+		}
 		if (missing.length > 0) throw new NotFoundError('Label code', missing.join(', '));
 
 		const pdf = await renderLabelsPdf(labels, {

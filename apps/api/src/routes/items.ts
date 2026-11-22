@@ -113,7 +113,7 @@ export function itemRoutes(repos: Repositories): Hono {
 	app.get('/:sku/reservations', async (c) => {
 		const sku = c.req.param('sku');
 		await repos.items.get(sku);
-		return c.json(await repos.reservations.listBySku(sku));
+		return c.json(await repos.reservations.listBySkuWithProject(sku));
 	});
 
 	return app;
