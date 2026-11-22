@@ -130,6 +130,7 @@ jobs:
         run: |
           docker compose --env-file .env -f docker/compose.yml -f docker/compose.caddy.yml down
           sudo rm -rf data
+          rm .env   # no password for this step (compose.yml reads .env when present)
           export POSTGRES_PASSWORD=ci-postgres
           docker compose -f docker/compose.yml -f docker/compose.postgres.yml up -d --build --wait
           for i in $(seq 1 30); do curl -fsS localhost:3000/api/health && break; sleep 1; done
