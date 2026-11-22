@@ -50,7 +50,8 @@
 <div class="mb-6 flex flex-wrap gap-2">
 	<a class="btn btn-primary" href={resolve('/items/new')}>+ New item</a>
 	<a class="btn" href={resolve('/categories/new')}>+ New category</a>
-	<button class="btn" disabled title="Coming in M5">Scan</button>
+	<a class="btn" href={resolve('/scan')}>Scan</a>
+	<a class="btn" href={resolve('/scan?mode=receive')}>Receive stock</a>
 </div>
 
 <section class="card">

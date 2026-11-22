@@ -1,4 +1,6 @@
+import { resolve } from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
+import { FAKE_CAMERA_FILE } from './e2e/fake-camera.ts';
 
 const PORT = 4173;
 const CI = Boolean(process.env.CI);
@@ -14,10 +16,20 @@ export default defineConfig({
 	workers: 1,
 	retries: CI ? 1 : 0,
 	reporter: CI ? [['github'], ['html', { open: 'never' }]] : 'list',
+	// Writes the fake camera video (a QR label) before the browsers start.
+	globalSetup: './e2e/global-setup.ts',
 	use: {
 		baseURL: `http://127.0.0.1:${PORT}`,
 		trace: 'retain-on-failure',
-		screenshot: 'only-on-failure'
+		screenshot: 'only-on-failure',
+		permissions: ['camera'],
+		launchOptions: {
+			args: [
+				'--use-fake-ui-for-media-stream',
+				'--use-fake-device-for-media-stream',
+				`--use-file-for-fake-video-capture=${resolve(FAKE_CAMERA_FILE)}`
+			]
+		}
 	},
 	projects: [
 		{ name: 'setup', testMatch: /auth\.setup\.ts/ },

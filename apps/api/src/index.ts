@@ -14,6 +14,7 @@ async function main(): Promise<void> {
 	const app = createApp({
 		conn,
 		staticDir: config.staticDir,
+		publicUrl: config.publicUrl,
 		auth: { password: config.appPassword, sessionSecret: config.sessionSecret }
 	});
 	const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {

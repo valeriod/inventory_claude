@@ -345,6 +345,17 @@ Import / Export
   5. *Stocktake*: scan a bin → scan items in it → enter counts → generates `count` movements for differences.
 - Camera access requires **HTTPS** (except localhost) — dev setup uses `vite --host` with mkcert.
 
+**Implementation notes (M5):**
+
+- **Engines.** The native `BarcodeDetector` is used when it reads QR codes (Android, macOS); otherwise zxing-wasm decodes downscaled frames in a Web Worker. The WASM file (~950 kB, ~415 kB brotli) is bundled and served from our own origin, not the library's default CDN, so scanning works on a LAN without internet. Setting `localStorage['inventory.scanner.engine'] = 'zxing'` forces the fallback.
+- **Formats.** QR, Data Matrix, EAN-13/8, UPC-A/E, Code 128, Code 39. Parsing ECIA Data Matrix bag labels is still a stretch goal.
+- **Repeat suppression.** A code is ignored while it stays in view (2.5 s after it was last seen), and the timer restarts when the scanner resumes after a dialog, so a label left under the camera does not reopen the dialog.
+- **`/scan` modes:** look up (item page or bin contents), adjust (± sheet), receive (receive sheet; unknown barcodes open "new item" with the barcode filled in). A text field accepts typed codes and USB/Bluetooth barcode scanners, which type like a keyboard. Flows 4 (pick for project) and 5 (stocktake) come with M6 and M9.
+- **Labels.** `GET /api/labels?skus=…&locations=…&layout=…&skip=…&outline=…` renders vector QR codes with pdfkit. Layouts: A4 3×8 (70×37 mm), A4 5×13 (Avery L7651), Letter 3×10 (Avery 5160), and 62×29 / 50×25 mm label rolls. `skip` reuses partly used sheets. At most 300 labels per request. QR codes use `PUBLIC_URL`, or the request origin when it is unset (the print dialog warns). The built-in PDF fonts only cover Windows-1252, so `Ω` prints as "Ohm".
+- **Printing from the UI:** "Print label" on an item, a selection on the items list, and per location (with everything inside it) or all locations.
+- **Packaging.** pdfkit loads font data from disk, so it is not bundled. `apps/api/package.json` `runtimeDependencies` lists the packages the build leaves external and the Docker image installs (better-sqlite3, pdfkit).
+- **E2E.** Chromium's fake camera plays a generated Y4M video of a QR label, so the tests exercise the real camera → decoder → lookup path with both engines.
+
 ## 6. PWA Front End
 
 ### 6.1 Screens
@@ -443,7 +454,7 @@ The compose files and Caddyfile examples ship in `docker/`. Updating the guide i
 | **M2** ✅ | Categories, dynamic fields & units | Field-def schema, runtime Zod builder, inheritance, `units.ts` (base-unit conversion), category CRUD API + tests |
 | **M3** ✅ | Items & stock | Item and stock HTTP API on top of the M1 repositories, attribute validation against resolved field definitions, `searchable` flag, search and JSON-filter query parameters |
 | **M4** ✅ | PWA foundation | SvelteKit SPA, optional password login, layout, dashboard, search, item detail/edit with `DynamicForm`, category field editor |
-| **M5** | Scanning | `Scanner` component, lookup/adjust/receive flows, QR label PDF generation |
+| **M5** ✅ | Scanning | `Scanner` component, lookup/adjust/receive flows, QR label PDF generation |
 | **M6** | Projects & reservations | Project CRUD, reservations with availability checks, pick list, consume/release |
 | **M7** | Reports | Inventory, low-stock, project BOM/shortage, movement history; CSV + PDF + print CSS |
 | **M8** | PWA polish & offline | Manifest, icons, install prompt, offline catalogue, queued adjustments, update toast |

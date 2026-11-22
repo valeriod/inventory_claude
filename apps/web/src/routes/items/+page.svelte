@@ -3,6 +3,8 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
+	import { SvelteSet } from 'svelte/reactivity';
+	import LabelDialog from '#lib/components/LabelDialog.svelte';
 	import Pagination from '#lib/components/Pagination.svelte';
 	import TreeSelect from '#lib/components/TreeSelect.svelte';
 	import { formatAttribute, formatQty } from '#lib/format.js';
@@ -66,6 +68,27 @@
 		const next = new URLSearchParams(page.url.searchParams.toString());
 		next.set('page', String(n));
 		return resolve(`/items?${next}`);
+	}
+
+	/** Selected SKUs (kept across pages and filter changes) for printing labels. */
+	const selected = new SvelteSet<string>();
+	let labelOpen = $state(false);
+	const pageSkus = $derived(data.list?.items.map((i) => i.sku) ?? []);
+	const allOnPageSelected = $derived(
+		pageSkus.length > 0 && pageSkus.every((sku) => selected.has(sku))
+	);
+
+	function toggleAllOnPage() {
+		const select = !allOnPageSelected;
+		for (const sku of pageSkus) {
+			if (select) selected.add(sku);
+			else selected.delete(sku);
+		}
+	}
+
+	function toggle(sku: string) {
+		if (selected.has(sku)) selected.delete(sku);
+		else selected.add(sku);
 	}
 
 	const activeFilters = $derived(
@@ -230,6 +253,14 @@
 			<table class="w-full text-left text-sm">
 				<thead class="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
 					<tr>
+						<th class="w-8 py-2 pl-3">
+							<input
+								type="checkbox"
+								aria-label="Select all items on this page"
+								checked={allOnPageSelected}
+								onchange={toggleAllOnPage}
+							/>
+						</th>
 						<th class="px-3 py-2">Item</th>
 						<th class="hidden px-3 py-2 md:table-cell">Category</th>
 						<th class="hidden px-3 py-2 md:table-cell">Location</th>
@@ -245,6 +276,14 @@
 						{@const cat = categoryById.get(item.categoryId)}
 						{@const low = item.qtyMin !== null && item.qtyAvailable <= item.qtyMin}
 						<tr class="hover:bg-slate-50" class:opacity-60={item.archivedAt}>
+							<td class="py-2 pl-3">
+								<input
+									type="checkbox"
+									aria-label="Select {item.sku}"
+									checked={selected.has(item.sku)}
+									onchange={() => toggle(item.sku)}
+								/>
+							</td>
 							<td class="px-3 py-2">
 								<a class="link font-medium" href={resolve('/items/[sku]', { sku: item.sku })}>
 									{item.name}
@@ -287,3 +326,17 @@
 		</div>
 	{/if}
 {/if}
+
+{#if selected.size > 0}
+	<div
+		class="fixed inset-x-0 bottom-14 z-20 mx-auto flex max-w-md items-center gap-2 rounded-lg border border-slate-200 bg-white p-2 pl-4 shadow-lg sm:bottom-4"
+		role="region"
+		aria-label="Selection"
+	>
+		<span class="text-sm font-medium">{selected.size} selected</span>
+		<button class="btn btn-sm ml-auto" onclick={() => selected.clear()}>Clear</button>
+		<button class="btn btn-sm btn-primary" onclick={() => (labelOpen = true)}>Print labels</button>
+	</div>
+{/if}
+
+<LabelDialog bind:open={labelOpen} skus={[...selected]} />

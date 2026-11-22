@@ -154,7 +154,25 @@ export const api = {
 	},
 
 	lookup: (code: string, f?: Fetch) =>
-		request<LookupResult>(`/lookup?code=${enc(code)}`, { fetch: f })
+		request<LookupResult>(`/lookup?code=${enc(code)}`, { fetch: f }),
+
+	labelInfo: (f?: Fetch) =>
+		request<{ baseUrl: string; configured: boolean }>('/labels/info', { fetch: f }),
+	/** URL of the label PDF (opened in a new tab rather than fetched). */
+	labelsUrl: (options: {
+		skus?: string[];
+		locations?: string[];
+		layout: string;
+		skip?: number;
+		outline?: boolean;
+	}): string => {
+		const params = new URLSearchParams({ layout: options.layout });
+		if (options.skus?.length) params.set('skus', options.skus.join(','));
+		if (options.locations?.length) params.set('locations', options.locations.join(','));
+		if (options.skip) params.set('skip', String(options.skip));
+		if (options.outline) params.set('outline', 'true');
+		return `/api/labels?${params.toString()}`;
+	}
 };
 
 export type { Category };

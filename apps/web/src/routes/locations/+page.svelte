@@ -4,6 +4,7 @@
 	import { resolve } from '$app/paths';
 	import { api } from '#lib/api.js';
 	import ErrorAlert from '#lib/components/ErrorAlert.svelte';
+	import LabelDialog from '#lib/components/LabelDialog.svelte';
 	import Modal from '#lib/components/Modal.svelte';
 	import TreeSelect from '#lib/components/TreeSelect.svelte';
 	import { descendantIds, flattenTree } from '#lib/tree.js';
@@ -21,6 +22,15 @@
 	let description = $state('');
 	let error = $state<unknown>(null);
 	let listError = $state<unknown>(null);
+	let labelCodes = $state<string[]>([]);
+	let labelOpen = $state(false);
+
+	/** Labels for a location and everything inside it, in tree order; or for all locations. */
+	function printLabels(root?: Location) {
+		const ids = root ? descendantIds(data.locations, root.id) : null;
+		labelCodes = entries.filter((e) => !ids || ids.has(e.node.id)).map((e) => e.node.code);
+		labelOpen = true;
+	}
 
 	function startCreate(parent: number | null = null) {
 		editing = null;
@@ -74,7 +84,12 @@
 
 <div class="mb-4 flex items-center justify-between gap-2">
 	<h1 class="text-2xl font-bold">Locations</h1>
-	<button class="btn btn-primary" onclick={() => startCreate()}>+ New location</button>
+	<div class="flex gap-2">
+		{#if entries.length > 0}
+			<button class="btn" onclick={() => printLabels()}>Print all labels</button>
+		{/if}
+		<button class="btn btn-primary" onclick={() => startCreate()}>+ New location</button>
+	</div>
 </div>
 
 <ErrorAlert error={listError} />
@@ -93,6 +108,13 @@
 				<span class="ml-auto flex flex-wrap gap-1">
 					<a class="btn btn-sm" href={resolve(`/items?location=${node.id}`)}>Items</a>
 					<button class="btn btn-sm" onclick={() => startCreate(node.id)}>+ Inside</button>
+					<button
+						class="btn btn-sm"
+						onclick={() => printLabels(node)}
+						title="Print labels for this location and everything inside it"
+					>
+						Labels
+					</button>
 					<button class="btn btn-sm" onclick={() => startEdit(node)}>Edit</button>
 					<button class="btn btn-sm" onclick={() => remove(node)}>Delete</button>
 				</span>
@@ -132,3 +154,5 @@
 		<button class="btn btn-primary" type="submit" form="location-form">Save</button>
 	{/snippet}
 </Modal>
+
+<LabelDialog bind:open={labelOpen} locations={labelCodes} />

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Category, ItemWithAvailability } from '@inventory/shared';
-	import { api } from '#lib/api.js';
+	import { api, type StockChangeResponse } from '#lib/api.js';
 	import { formatQty } from '#lib/format.js';
 	import ErrorAlert from './ErrorAlert.svelte';
 	import Modal from './Modal.svelte';
@@ -19,7 +19,7 @@
 		mode: StockMode;
 		item: ItemWithAvailability;
 		category: Category;
-		ondone: () => void;
+		ondone: (result: StockChangeResponse) => void;
 	} = $props();
 
 	const TITLES: Record<StockMode, string> = {
@@ -51,15 +51,16 @@
 		busy = true;
 		try {
 			const n = note.trim() || null;
-			if (mode === 'count') await api.items.count(item.sku, { countedQty: qty, note: n });
-			else
-				await api.items.addMovement(item.sku, {
-					reason: mode,
-					delta: mode === 'consume' ? -Math.abs(qty) : mode === 'receive' ? Math.abs(qty) : qty,
-					note: n
-				});
+			const result =
+				mode === 'count'
+					? await api.items.count(item.sku, { countedQty: qty, note: n })
+					: await api.items.addMovement(item.sku, {
+							reason: mode,
+							delta: mode === 'consume' ? -Math.abs(qty) : mode === 'receive' ? Math.abs(qty) : qty,
+							note: n
+						});
 			open = false;
-			ondone();
+			ondone(result);
 		} catch (err) {
 			error = err;
 		} finally {
