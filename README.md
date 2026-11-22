@@ -6,7 +6,7 @@ reports. It runs on SQLite or Postgres.
 
 See [`2026-11-17-inventory-app-plan.md`](2026-11-17-inventory-app-plan.md) for the full design and milestones.
 
-**Status:** M0–M6 are done: setup, data layer, categories with custom fields and units, the items and stock API, the web app (login, search, items, categories, locations), barcode/QR scanning with printable QR labels, projects with parts lists, reservations and pick lists, and reports (inventory, low stock, project bill of materials, stock movements) as CSV, PDF or print, and an installable app that works offline and sends queued stock changes when it reconnects. Next is M9 (import/export, deploy guide and hardening).
+**Status:** all milestones (M0–M9) are done: setup, data layer, categories with custom fields and units, the items and stock API, the web app (login, search, items, categories, locations), barcode/QR scanning with printable QR labels, projects with parts lists, reservations and pick lists, and reports (inventory, low stock, project bill of materials, stock movements) as CSV, PDF or print, an installable app that works offline and sends queued stock changes when it reconnects, CSV import/export, a stocktake mode, backups and a deployment guide. To run it for real, see [`docs/DEPLOY.md`](docs/DEPLOY.md).
 
 ## Requirements
 
@@ -53,6 +53,8 @@ keeps its copy under `~/.vite-plugin-mkcert`).
 | `pnpm test:e2e` | Playwright end-to-end tests against the production build (`pnpm build` first; installs: `pnpm --filter web exec playwright install chromium`) |
 | `pnpm db:migrate` | Apply migrations to `DATABASE_URL` |
 | `pnpm db:seed` | Add demo categories, locations, items and a project (empty database only) |
+| `pnpm db:transfer --from <url\|file.json> --to <url\|file.json>` | Copy all data between SQLite, Postgres and JSON files (target must be empty) |
+| `pnpm db:backup [--dir <dir>]` | Write a backup now (`BACKUP_DIR` by default) |
 
 ## Configuration
 
@@ -65,6 +67,8 @@ Set environment variables in `.env` (see [`.env.example`](.env.example)):
 | `APP_PASSWORD` / `SESSION_SECRET` | none | Single-user password; when set, the app shows a login screen and the API requires the session cookie |
 | `PUBLIC_URL` | none | Base URL encoded into printed QR labels |
 | `STATIC_DIR` | none (`pnpm start` uses `apps/web/build`) | Directory of the built PWA served by the API |
+| `TRUST_PROXY` | `false` | Behind a reverse proxy: use `X-Forwarded-For` for the login rate limit |
+| `BACKUP_DIR` / `BACKUP_KEEP` / `BACKUP_HOUR` | none / `14` / `3` | Nightly backups (SQLite `.db` copies, Postgres JSON exports) |
 
 ## Docker
 
@@ -74,8 +78,8 @@ POSTGRES_PASSWORD=change-me docker compose -f docker/compose.yml \
   -f docker/compose.postgres.yml up -d --build                           # with Postgres
 ```
 
-The app is published on `127.0.0.1:3000`. Full deploy instructions (Tailscale, LAN, VPS, backups)
-come with M9 in `docs/DEPLOY.md`.
+The app is published on `127.0.0.1:3000`. For HTTPS (Tailscale, Caddy on a LAN or a VPS),
+backups, restores and upgrades, follow [`docs/DEPLOY.md`](docs/DEPLOY.md).
 
 ## Repository layout
 

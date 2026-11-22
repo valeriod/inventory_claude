@@ -35,6 +35,12 @@
 			mobile: false
 		},
 		{
+			href: resolve('/settings'),
+			label: 'Settings',
+			match: (p: string) => p.startsWith('/settings') || p.startsWith('/import'),
+			mobile: false
+		},
+		{
 			href: resolve('/locations'),
 			label: 'Locations',
 			match: (p: string) => p.startsWith('/locations')

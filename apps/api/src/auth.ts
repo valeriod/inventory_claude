@@ -14,6 +14,11 @@ import { jsonBody } from './http/validate.ts';
 export interface AuthConfig {
 	password: string | undefined;
 	sessionSecret: string | undefined;
+	/**
+	 * Behind a reverse proxy (Caddy, tailscale serve): take the client address from the last
+	 * X-Forwarded-For entry, which the proxy appends, for the login rate limit.
+	 */
+	trustProxy?: boolean;
 	/** Clock in ms; injectable for tests. */
 	now?: () => number;
 }
@@ -38,7 +43,11 @@ function errorBody(code: ApiErrorBody['error']['code'], message: string): ApiErr
 	return { error: { code, message } };
 }
 
-function clientIp(c: Context): string {
+function clientIp(c: Context, trustProxy: boolean): string {
+	if (trustProxy) {
+		const forwarded = c.req.header('x-forwarded-for')?.split(',').at(-1)?.trim();
+		if (forwarded) return forwarded;
+	}
 	try {
 		return getConnInfo(c).remote.address ?? 'unknown';
 	} catch {
@@ -93,7 +102,7 @@ export function createAuth(config: AuthConfig) {
 	routes.post('/login', async (c) => {
 		if (!required)
 			return c.json({ authRequired: false, authenticated: true } satisfies SessionResponse);
-		const ip = clientIp(c);
+		const ip = clientIp(c, config.trustProxy ?? false);
 		if (tooManyAttempts(ip)) {
 			return c.json(
 				errorBody('too_many_requests', 'Too many login attempts; try again later'),

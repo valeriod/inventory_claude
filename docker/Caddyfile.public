@@ -1,0 +1,12 @@
+# Public server (VPS): automatic HTTPS with Let's Encrypt.
+#   SITE_ADDRESS=inventory.example.com   (a DNS name pointing at this server)
+#   ACME_EMAIL=you@example.com           (expiry notices from Let's Encrypt)
+{
+	email {$ACME_EMAIL}
+}
+
+{$SITE_ADDRESS} {
+	encode zstd gzip
+	header Strict-Transport-Security "max-age=31536000"
+	reverse_proxy app:3000
+}

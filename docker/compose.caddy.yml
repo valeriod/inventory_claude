@@ -1,0 +1,36 @@
+# HTTPS in front of the app (override file):
+#   docker compose -f docker/compose.yml -f docker/compose.caddy.yml up -d --build
+# Settings in .env (see docs/DEPLOY.md):
+#   CADDYFILE=Caddyfile.public | Caddyfile.lan
+#   SITE_ADDRESS=inventory.example.com
+#   ACME_EMAIL=you@example.com            (public only)
+#   APP_PASSWORD=… and SESSION_SECRET=…   (required unless ALLOW_NO_AUTH=true)
+services:
+  app:
+    # Only Caddy talks to the app; nothing is published on the host.
+    ports: !reset []
+    environment:
+      ALLOW_NO_AUTH: ${ALLOW_NO_AUTH:-false}
+      TRUST_PROXY: 'true'
+      PUBLIC_URL: ${PUBLIC_URL:-https://${SITE_ADDRESS:?set SITE_ADDRESS}}
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./${CADDYFILE:-Caddyfile.public}:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

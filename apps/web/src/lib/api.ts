@@ -10,6 +10,7 @@ import type {
 	Location,
 	LookupResult,
 	BomLine,
+	ImportResult,
 	ProjectPart,
 	Report,
 	ReportKind,
@@ -335,6 +336,49 @@ export const api = {
 			() => request<LookupResult>(`/lookup?code=${enc(code)}`, { fetch: f }),
 			() => localLookup(code)
 		),
+
+	system: (f?: Fetch) =>
+		request<{
+			version: string;
+			database: 'sqlite' | 'postgres';
+			publicUrl: string | null;
+			backup: {
+				dir: string;
+				keep: number;
+				hour: number;
+				lastBackup: { file: string; at: string } | null;
+			} | null;
+		}>('/system', { fetch: f }),
+	/** CSV import: a dry run unless `commit` (and nothing is written if any row has errors). */
+	importItems: async (
+		csv: string,
+		options: { category?: number | null; updateStock: boolean; commit: boolean }
+	): Promise<ImportResult> => {
+		const params = new URLSearchParams({
+			updateStock: String(options.updateStock),
+			commit: String(options.commit)
+		});
+		if (options.category) params.set('category', String(options.category));
+		try {
+			return await request<ImportResult>(`/import/items?${params}`, {
+				method: 'POST',
+				text: csv,
+				contentType: 'text/csv'
+			});
+		} catch (err) {
+			// 422: the commit was refused because a row became invalid since the check.
+			if (err instanceof ApiError && err.status === 422) {
+				throw new ApiError(
+					422,
+					'invalid_operation',
+					'Some rows are no longer valid. Check the file again.'
+				);
+			}
+			throw err;
+		}
+	},
+	exportUrl: (format: 'json' | 'csv') => `/api/export?format=${format}`,
+	importTemplateUrl: (category: number) => `/api/import/template?category=${category}`,
 
 	labelInfo: (f?: Fetch) =>
 		request<{ baseUrl: string; configured: boolean }>('/labels/info', { fetch: f }),

@@ -22,7 +22,17 @@ const envSchema = z
 			.optional()
 			.transform((v) => (v === '' ? undefined : v)),
 		ALLOW_NO_AUTH: booleanFromEnv,
-		STATIC_DIR: z.string().optional()
+		/** Set behind a reverse proxy so the login rate limit sees real client addresses. */
+		TRUST_PROXY: booleanFromEnv,
+		STATIC_DIR: z.string().optional(),
+		/** Nightly backups are written here when set (the Docker image sets /data/backups). */
+		BACKUP_DIR: z
+			.string()
+			.optional()
+			.transform((v) => (v === '' ? undefined : v)),
+		BACKUP_KEEP: z.coerce.number().int().min(1).max(3650).default(14),
+		/** Local hour (0–23) at which the nightly backup runs. */
+		BACKUP_HOUR: z.coerce.number().int().min(0).max(23).default(3)
 	})
 	.superRefine((env, ctx) => {
 		if (env.APP_PASSWORD && (!env.SESSION_SECRET || env.SESSION_SECRET.length < 32)) {
@@ -48,7 +58,9 @@ export type Config = {
 	publicUrl: string | undefined;
 	appPassword: string | undefined;
 	sessionSecret: string | undefined;
+	trustProxy: boolean;
 	staticDir: string | undefined;
+	backup: { dir: string; keep: number; hour: number } | undefined;
 };
 
 export class ConfigError extends Error {}
@@ -69,6 +81,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 		publicUrl: e.PUBLIC_URL,
 		appPassword: e.APP_PASSWORD,
 		sessionSecret: e.SESSION_SECRET,
-		staticDir: e.STATIC_DIR
+		trustProxy: e.TRUST_PROXY,
+		staticDir: e.STATIC_DIR,
+		backup: e.BACKUP_DIR
+			? { dir: e.BACKUP_DIR, keep: e.BACKUP_KEEP, hour: e.BACKUP_HOUR }
+			: undefined
 	};
 }

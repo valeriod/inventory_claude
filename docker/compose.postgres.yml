@@ -1,5 +1,6 @@
 # Postgres variant (override file):
 #   POSTGRES_PASSWORD=… docker compose -f docker/compose.yml -f docker/compose.postgres.yml up -d --build
+# Nightly backups are written as gzipped JSON to ./data/backups (restore with db:transfer).
 services:
   app:
     environment:

@@ -13,6 +13,9 @@ services:
       - path: ../.env
         required: false
     environment:
+      # Fixed inside the container (values in .env for local development must not leak in).
+      HOST: 0.0.0.0
+      PORT: '3000'
       DATABASE_URL: sqlite:///data/inventory.db
       # The port below is published on localhost only. If you expose it more widely,
       # set APP_PASSWORD + SESSION_SECRET in .env and ALLOW_NO_AUTH=false.

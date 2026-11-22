@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { FAKE_CAMERA_SKU } from './fake-camera.ts';
-import { unique } from './helpers.ts';
+import { unique, withoutCamera } from './helpers.ts';
 
 async function createProject(page: Page, name: string): Promise<number> {
 	const res = await page.request.post('/api/projects', { data: { name, status: 'active' } });
@@ -135,7 +135,7 @@ test('project QR links open the project', async ({ page }) => {
 	await expect(page).toHaveURL(new RegExp(`/projects/${id}$`));
 	await expect(page.getByRole('heading', { name })).toBeVisible();
 
-	await page.context().clearPermissions();
+	await withoutCamera(page);
 	await page.goto('/scan');
 	await page.getByLabel('Code').fill(`https://inventory.test/p/${id}`);
 	await page.getByLabel('Code').press('Enter');

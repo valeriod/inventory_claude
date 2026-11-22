@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { FAKE_CAMERA_SKU } from './fake-camera.ts';
+import { withoutCamera } from './helpers.ts';
 
 /** The fake camera (see fake-camera.ts) continuously shows the QR label of FAKE_CAMERA_SKU. */
 
@@ -50,9 +51,9 @@ test('adjust stock by scanning, without rescanning the label in view', async ({ 
 });
 
 test.describe('typed or USB-scanner codes', () => {
-	// Pause the camera path: these tests use the text field only.
-	test.beforeEach(async ({ context }) => {
-		await context.clearPermissions();
+	// These tests use the text field only.
+	test.beforeEach(async ({ page }) => {
+		await withoutCamera(page);
 	});
 
 	test('receive a known manufacturer barcode', async ({ page }) => {

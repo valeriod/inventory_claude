@@ -1,5 +1,10 @@
 <script lang="ts">
-	import type { CategoryWithFields, ItemWithAvailability, PickLine } from '@inventory/shared';
+	import type {
+		CategoryWithFields,
+		ItemWithAvailability,
+		Location,
+		PickLine
+	} from '@inventory/shared';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
@@ -16,7 +21,16 @@
 	const MODES = [
 		{ id: 'lookup', label: 'Look up', hint: 'Scan to open the item or bin.' },
 		{ id: 'adjust', label: 'Adjust', hint: 'Scan an item, then add or remove stock.' },
-		{ id: 'receive', label: 'Receive', hint: 'Scan to add stock; unknown barcodes create an item.' }
+		{
+			id: 'receive',
+			label: 'Receive',
+			hint: 'Scan to add stock; unknown barcodes create an item.'
+		},
+		{
+			id: 'stocktake',
+			label: 'Stocktake',
+			hint: 'Scan a bin label, then each item in it, and enter what you count.'
+		}
 	] as const;
 	type Mode = (typeof MODES)[number]['id'] | 'pick';
 
@@ -45,6 +59,33 @@
 	let pickLine = $state<{ line: PickLine; category: CategoryWithFields } | null>(null);
 	let pickOpen = $state(false);
 	let recent = $state<{ id: number; sku: string; name: string; text: string }[]>([]);
+
+	// Stocktake: the bin being counted, what the inventory says is in it, and what was counted.
+	let bin = $state<Location | null>(null);
+	let binItems = $state<ItemWithAvailability[]>([]);
+	let counted = $state<Record<string, number>>({});
+	let strays = $state<ItemWithAvailability[]>([]);
+	const countedInBin = $derived(binItems.filter((i) => i.sku in counted).length);
+
+	async function openBin(location: Location) {
+		const list = await api.items.list(`location=${location.id}&sublocations=false&pageSize=200`);
+		bin = location;
+		binItems = list.items;
+		counted = {};
+		strays = [];
+		message = { kind: 'info', text: `Counting bin ${location.code}. Scan each item in it.` };
+	}
+
+	async function moveHere(item: ItemWithAvailability) {
+		if (!bin) return;
+		try {
+			const moved = await api.items.update(item.sku, { locationId: bin.id });
+			strays = strays.filter((s) => s.sku !== item.sku);
+			binItems = [...binItems, moved];
+		} catch (err) {
+			message = { kind: 'error', error: err };
+		}
+	}
 	let nextId = 0;
 
 	const paused = $derived(busy || stockOpen || pickOpen);
@@ -79,12 +120,32 @@
 					}
 					return;
 				}
-				stock = { item, category, mode: mode === 'receive' ? 'receive' : 'adjust' };
+				if (mode === 'stocktake') {
+					if (!bin) {
+						message = { kind: 'info', text: 'Scan the label of the bin you are counting first.' };
+						return;
+					}
+					if (
+						!binItems.some((i) => i.sku === item.sku) &&
+						!strays.some((i) => i.sku === item.sku)
+					) {
+						strays = [...strays, item];
+					}
+				}
+				stock = {
+					item,
+					category,
+					mode: mode === 'receive' ? 'receive' : mode === 'stocktake' ? 'count' : 'adjust'
+				};
 				stockOpen = true;
 			} else if (result.type === 'location') {
 				const { location } = result;
 				if (mode === 'lookup') {
 					await goto(resolve(`/items?location=${location.id}`));
+					return;
+				}
+				if (mode === 'stocktake') {
+					await openBin(location);
 					return;
 				}
 				message = {
@@ -121,6 +182,7 @@
 	function stockDone(result: StockChangeResponse) {
 		if (!stock) return;
 		const { item, category } = stock;
+		if (stock.mode === 'count') counted = { ...counted, [item.sku]: result.qtyOnHand };
 		const delta = result.movement?.delta ?? result.qtyOnHand - item.qtyOnHand;
 		const sign = delta > 0 ? '+' : delta < 0 ? '−' : '±';
 		recent = [
@@ -128,7 +190,11 @@
 				id: nextId++,
 				sku: item.sku,
 				name: item.name,
-				text: `${sign}${formatQty(Math.abs(delta), category)} → ${formatQty(result.qtyOnHand, category)}${result.queued ? ' (queued)' : ''}`
+				text:
+					(stock.mode === 'count'
+						? `counted ${formatQty(result.qtyOnHand, category)} (${delta === 0 ? 'no change' : `${sign}${formatQty(Math.abs(delta), category)}`})`
+						: `${sign}${formatQty(Math.abs(delta), category)} → ${formatQty(result.qtyOnHand, category)}`) +
+					(result.queued ? ' (queued)' : '')
 			},
 			...recent
 		].slice(0, 10);
@@ -168,7 +234,7 @@
 		</a>
 	</div>
 {:else}
-	<nav class="mb-3 grid grid-cols-3 gap-1 rounded-lg bg-slate-200 p-1" aria-label="Scan mode">
+	<nav class="mb-3 grid grid-cols-4 gap-1 rounded-lg bg-slate-200 p-1" aria-label="Scan mode">
 		{#each MODES as m (m.id)}
 			<a
 				href={resolve(`/scan?mode=${m.id}`)}
@@ -221,6 +287,58 @@
 		</div>
 	{:else if message?.kind === 'error'}
 		<ErrorAlert error={message.error} />
+	{/if}
+
+	{#if mode === 'stocktake' && bin}
+		<section class="card" data-testid="stocktake">
+			<div class="mb-2 flex items-center gap-2">
+				<h2 class="text-sm font-semibold">
+					Bin {bin.code} · {countedInBin} of {binItems.length} counted
+				</h2>
+				<button class="btn btn-sm ml-auto" onclick={() => (bin = null)}>Finish bin</button>
+			</div>
+			{#if binItems.length === 0}
+				<p class="text-sm text-slate-500">No items are recorded in this bin.</p>
+			{/if}
+			<ul class="divide-y divide-slate-100 text-sm">
+				{#each binItems as i (i.sku)}
+					{@const cat = data.categories.find((c) => c.id === i.categoryId)}
+					<li class="flex items-baseline gap-2 py-1.5" data-sku={i.sku}>
+						<span class="w-4 text-green-700">{i.sku in counted ? '✓' : ''}</span>
+						<span class="font-mono">{i.sku}</span>
+						<span class="truncate text-slate-600">{i.name}</span>
+						<span class="ml-auto whitespace-nowrap">
+							{#if i.sku in counted}
+								{formatQty(counted[i.sku]!, cat)}
+							{:else}
+								<span class="text-slate-400">expected {formatQty(i.qtyOnHand, cat)}</span>
+							{/if}
+						</span>
+					</li>
+				{/each}
+			</ul>
+			{#if strays.length > 0}
+				<h3 class="mt-3 mb-1 text-xs font-semibold text-amber-800 uppercase">
+					Found here, recorded elsewhere
+				</h3>
+				<ul class="divide-y divide-slate-100 text-sm">
+					{#each strays as i (i.sku)}
+						<li class="flex items-center gap-2 py-1.5">
+							<span class="font-mono">{i.sku}</span>
+							<span class="truncate text-slate-600">{i.name}</span>
+							<button class="btn btn-sm ml-auto" onclick={() => moveHere(i)}>
+								Move to {bin.code}
+							</button>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+			{#if binItems.length > countedInBin}
+				<p class="mt-2 text-xs text-slate-500">
+					Items not scanned are left unchanged. If one is missing, count it as 0 from its page.
+				</p>
+			{/if}
+		</section>
 	{/if}
 
 	{#if data.project}

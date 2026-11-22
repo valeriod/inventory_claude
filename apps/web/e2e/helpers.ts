@@ -33,3 +33,18 @@ export async function navTo(page: Page, label: string): Promise<void> {
 		.getByRole('link', { name: label })
 		.click();
 }
+
+/**
+ * Turn the camera off for tests that type codes. (Revoking the permission is not enough: the fake
+ * camera flags grant access anyway, and the fake video would keep scanning its QR code.)
+ */
+export async function withoutCamera(page: Page): Promise<void> {
+	await page.addInitScript(() => {
+		Object.defineProperty(navigator, 'mediaDevices', {
+			value: {
+				getUserMedia: () => Promise.reject(new DOMException('Camera disabled', 'NotAllowedError')),
+				enumerateDevices: () => Promise.resolve([])
+			}
+		});
+	});
+}

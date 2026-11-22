@@ -38,6 +38,26 @@ describe('api', () => {
 		writeFileSync(join(dir, '_app/immutable/app.abc123.js'), 'export {}');
 		writeFileSync(join(dir, 'manifest.webmanifest'), '{}');
 
+		it('sends security headers, with a CSP on HTML only', async () => {
+			const app = createApp({ conn, staticDir: dir });
+			const html = await app.request('/items/RES-0001');
+			expect(html.headers.get('x-content-type-options')).toBe('nosniff');
+			expect(html.headers.get('x-frame-options')).toBe('DENY');
+			expect(html.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
+			const json = await app.request('/api/health');
+			expect(json.headers.get('x-content-type-options')).toBe('nosniff');
+			expect(json.headers.get('content-security-policy')).toBeNull();
+		});
+
+		it('rejects oversized API bodies', async () => {
+			const res = await createApp({ conn }).request('/api/categories', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json', 'content-length': String(2 * 1024 * 1024) },
+				body: 'x'.repeat(2 * 1024 * 1024)
+			});
+			expect(res.status).toBe(413);
+		});
+
 		it('caches hashed build files forever and revalidates everything else', async () => {
 			const app = createApp({ conn, staticDir: dir });
 			const asset = await app.request('/_app/immutable/app.abc123.js');
