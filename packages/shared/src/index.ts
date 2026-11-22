@@ -8,3 +8,4 @@ export * from './si.ts';
 export * from './sku.ts';
 export * from './units.ts';
 export * from './api/index.ts';
+export * from './labels.ts';

@@ -6,7 +6,7 @@ reports. It runs on SQLite or Postgres.
 
 See [`2026-11-17-inventory-app-plan.md`](2026-11-17-inventory-app-plan.md) for the full design and milestones.
 
-**Status:** M0–M4 are done: setup, data layer, categories with custom fields and units, the items and stock API, and the web app foundation (login, search, items, categories, locations). Next is M5 (barcode and QR scanning).
+**Status:** M0–M5 are done: setup, data layer, categories with custom fields and units, the items and stock API, the web app (login, search, items, categories, locations), and barcode/QR scanning with printable QR labels. Next is M6 (projects and reservations).
 
 ## Requirements
 

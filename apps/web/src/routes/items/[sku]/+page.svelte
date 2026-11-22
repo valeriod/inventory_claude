@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import { api } from '#lib/api.js';
 	import ErrorAlert from '#lib/components/ErrorAlert.svelte';
+	import LabelDialog from '#lib/components/LabelDialog.svelte';
 	import Modal from '#lib/components/Modal.svelte';
 	import StockDialog, { type StockMode } from '#lib/components/StockDialog.svelte';
 	import { formatAttribute, formatDateTime, formatQty, REASON_LABELS } from '#lib/format.js';
@@ -14,6 +15,7 @@
 	let stockOpen = $state(false);
 	let stockMode = $state<StockMode>('receive');
 	let confirmDelete = $state(false);
+	let labelOpen = $state(false);
 	let error = $state<unknown>(null);
 
 	const item = $derived(data.item);
@@ -71,6 +73,7 @@
 	</div>
 	<div class="flex flex-wrap gap-2">
 		<a class="btn" href={resolve('/items/[sku]/edit', { sku: item.sku })}>Edit</a>
+		<button class="btn" onclick={() => (labelOpen = true)}>Print label</button>
 		{#if item.archivedAt}
 			<button class="btn" onclick={() => run(() => api.items.restore(item.sku))}>Restore</button>
 			<button class="btn btn-danger" onclick={() => (confirmDelete = true)}>Delete…</button>
@@ -216,6 +219,8 @@
 	{category}
 	ondone={() => invalidateAll()}
 />
+
+<LabelDialog bind:open={labelOpen} skus={[item.sku]} />
 
 <Modal bind:open={confirmDelete} title="Delete permanently?">
 	<p class="text-sm">

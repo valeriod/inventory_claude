@@ -8,6 +8,7 @@ import { createAuth, type AuthConfig } from './auth.ts';
 import { handleError, notFound } from './http/errors.ts';
 import { categoryRoutes } from './routes/categories.ts';
 import { itemRoutes } from './routes/items.ts';
+import { labelRoutes } from './routes/labels.ts';
 import { locationRoutes } from './routes/locations.ts';
 import { lookupRoutes } from './routes/lookup.ts';
 import { VERSION } from './version.ts';
@@ -18,9 +19,11 @@ export interface AppOptions {
 	staticDir?: string | undefined;
 	/** Optional single-user password protection (plan §7). */
 	auth?: AuthConfig;
+	/** Base URL encoded in printed QR labels (PUBLIC_URL); defaults to the request origin. */
+	publicUrl?: string | undefined;
 }
 
-export function createApp({ conn, staticDir, auth: authConfig }: AppOptions): Hono {
+export function createApp({ conn, staticDir, auth: authConfig, publicUrl }: AppOptions): Hono {
 	const repos = createRepositories(conn);
 	const auth = createAuth(authConfig ?? { password: undefined, sessionSecret: undefined });
 	const app = new Hono();
@@ -37,6 +40,7 @@ export function createApp({ conn, staticDir, auth: authConfig }: AppOptions): Ho
 	api.route('/items', itemRoutes(repos));
 	api.route('/locations', locationRoutes(repos));
 	api.route('/lookup', lookupRoutes(repos));
+	api.route('/labels', labelRoutes(repos, { publicUrl }));
 
 	api.all('*', notFound);
 	api.onError(handleError);

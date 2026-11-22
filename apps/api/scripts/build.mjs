@@ -1,5 +1,6 @@
 // Bundles the API (including the TypeScript workspace packages) into dist/server.js.
-// better-sqlite3 is a native module and stays external; it is installed at runtime.
+// Packages listed in package.json "runtimeDependencies" stay external (better-sqlite3 is native,
+// pdfkit reads font data files from disk); the Docker image installs them next to dist/.
 import { readFileSync } from 'node:fs';
 import { build } from 'esbuild';
 
@@ -14,7 +15,7 @@ await build({
 	format: 'esm',
 	target: 'node24',
 	sourcemap: true,
-	external: ['better-sqlite3', 'pg-native'],
+	external: [...pkg.runtimeDependencies, 'pg-native'],
 	define: { __APP_VERSION__: JSON.stringify(version) },
 	// Allow bundled CommonJS dependencies (e.g. pg) to use require() in ESM output.
 	banner: {

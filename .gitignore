@@ -33,3 +33,4 @@ test-results/
 
 # Playwright login state
 apps/web/e2e/.auth/
+apps/web/e2e/.fake-camera/

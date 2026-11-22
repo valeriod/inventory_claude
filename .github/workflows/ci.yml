@@ -89,6 +89,10 @@ jobs:
           done
           curl -fsS localhost:3000/api/health | grep '"database":"sqlite"'
           curl -fsS localhost:3000/items/TEST | grep -i '<html'
+          # pdfkit is installed next to the bundle in the image: render a label PDF
+          curl -fsS -X POST -H 'content-type: application/json' \
+            -d '{"name":"Smoke bin","code":"SMOKE-1"}' localhost:3000/api/locations
+          curl -fsS 'localhost:3000/api/labels?locations=SMOKE-1' | head -c 5 | grep -- '%PDF-'
       - if: always()
         run: docker logs inv || true
 

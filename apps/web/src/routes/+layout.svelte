@@ -12,6 +12,7 @@
 	const nav = [
 		{ href: resolve('/'), label: 'Home', match: (p: string) => p === '/' },
 		{ href: resolve('/items'), label: 'Items', match: (p: string) => p.startsWith('/items') },
+		{ href: resolve('/scan'), label: 'Scan', match: (p: string) => p.startsWith('/scan') },
 		{
 			href: resolve('/categories'),
 			label: 'Categories',
@@ -70,7 +71,7 @@
 
 	{#if showChrome}
 		<nav
-			class="fixed inset-x-0 bottom-0 z-10 grid grid-cols-4 border-t border-slate-200 bg-white sm:hidden"
+			class="fixed inset-x-0 bottom-0 z-10 grid grid-cols-5 border-t border-slate-200 bg-white sm:hidden"
 			aria-label="Main"
 		>
 			{#each nav as item (item.href)}

@@ -17,11 +17,13 @@ COPY . .
 ARG APP_VERSION=0.0.0
 RUN APP_VERSION=${APP_VERSION} pnpm build
 
-# The API bundle inlines everything except better-sqlite3 (native, ships prebuilt binaries).
-# Install exactly the version pinned in apps/api/package.json into a clean runtime folder.
+# The API bundle inlines everything except the packages listed in apps/api/package.json
+# "runtimeDependencies" (native code or data files). Install exactly the pinned versions into a
+# clean runtime folder.
 RUN mkdir /runtime \
-	&& node -e "const v=require('./apps/api/package.json').dependencies['better-sqlite3']; \
-		require('fs').writeFileSync('/runtime/package.json', JSON.stringify({type:'module',private:true,dependencies:{'better-sqlite3':v}}))" \
+	&& node -e "const p=require('./apps/api/package.json'); \
+		const deps=Object.fromEntries(p.runtimeDependencies.map((n)=>[n,p.dependencies[n]])); \
+		require('fs').writeFileSync('/runtime/package.json', JSON.stringify({type:'module',private:true,dependencies:deps}))" \
 	&& cd /runtime && npm install --omit=dev --no-audit --no-fund
 
 # ---- runtime ----
